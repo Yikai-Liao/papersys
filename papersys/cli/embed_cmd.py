@@ -61,7 +61,7 @@ def embed(
     import numpy as np
     from datetime import datetime
     from papersys.database.manager import PaperManager, upsert, add
-    from papersys.embedding import google_batch_embedding, collect_content
+    from papersys.embedding import google_batch_embedding_with_rate_limit, collect_content
     from papersys.database.name import ID, TITLE, ABSTRACT
     
     # Load config
@@ -109,11 +109,13 @@ def embed(
     logger.info("Embedding {} papers using model {}", len(contents), config.embedding.model)
     
     time_start = time.time()
-    embeddings: np.ndarray = google_batch_embedding(
+    embeddings: np.ndarray = google_batch_embedding_with_rate_limit(
         model=config.embedding.model,
         inputs=contents,
         output_dimensionality=config.embedding.dim,
         dtype = np.float16,
+        batch_size=5000,
+        tokens_per_minute=500_000,
     )
     time_end = time.time()
     
