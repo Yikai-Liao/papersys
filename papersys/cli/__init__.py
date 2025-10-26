@@ -7,6 +7,7 @@ from .init_cmd import init
 from .embed_cmd import embed
 from .stat_cmd import stat
 from .optimize_cmd import optimize
+from .fetch_cmd import fetch
 
 # Load environment variables before creating the app
 load_dotenv(BASE_DIR / ".env")
@@ -18,6 +19,7 @@ app.command(help="Initialize Database from Arxiv OAI File hosted on Kaggle")(ini
 app.command(help="Embed papers in the database using the specified embedding model.")(embed)
 app.command(help="Display statistics and status for database tables.")(stat)
 app.command(help="Optimize database tables ")(optimize)
+app.command(help="Fetch new papers from arXiv OAI-PMH API and upsert into database.")(fetch)
 
 
 @app.callback()
@@ -26,4 +28,4 @@ def main() -> None:
     pass
 
 
-__all__ = ["app", "init", "embed", "stat", "optimize"]
+__all__ = ["app", "init", "embed", "stat", "optimize", "fetch"]

@@ -42,12 +42,12 @@ def load_arxiv_oai_snapshot(file_path: str | Path) -> pl.DataFrame:
 
 def fetch_arxiv_oai(
     categories: list[str] | None,
-    start: date,
-    end: date
+    start: date | None,
+    end: date | None,
 ) -> pl.DataFrame:
     client = ArxivOAIClient()
-    start_str = start.strftime("%Y-%m-%d")
-    end_str = end.strftime("%Y-%m-%d")
+    start_str = start.strftime("%Y-%m-%d") if start else None
+    end_str = end.strftime("%Y-%m-%d") if end else None
     if categories is None or len(categories) == 0:
         records = client.list_records(start_str, end_str)
     else:
