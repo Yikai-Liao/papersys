@@ -82,3 +82,15 @@ def paper_embedding_schema(dim: int) -> pa.Schema:
             pa.field(EMBEDDING_VECTOR, pa.list_(pa.float16(), dim)),
         ]
     )
+    
+PREFERENCE_SCHEMA = pa.schema(
+    [
+        pa.field(ID, pa.string()),
+        pa.field(PREFERENCE, pa.string()),
+    ]
+)
+
+PREFERENCE_PL_SCHEMA: Dict[str, pl.DataType] = dict([
+    (ID, String),
+    (PREFERENCE, String),
+])

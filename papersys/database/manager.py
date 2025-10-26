@@ -5,7 +5,7 @@ import lancedb
 from pathlib import Path
 from loguru import logger
 from datetime import date
-from .schema import PAPER_METADATA_SCHEMA, paper_embedding_schema
+from .schema import *
 from .name import *
 
 
@@ -13,6 +13,15 @@ class PaperManager:
     def __init__(self, uri: str = "data/sample-lancedb"):
         logger.info(f"Connecting to database at {uri}")
         self.db = lancedb.connect(uri)
+        
+    @property
+    def preference_table(self):
+        try:
+            table = self.db[PREFERENCE_TABLE]
+        except KeyError:
+            logger.debug("Preference table not found, creating a new one.")
+            table = self.create_preference_table()
+        return table
     
     @property
     def metadata_table(self):
@@ -31,6 +40,44 @@ class PaperManager:
             logger.debug("Embedding table not found, creating a new one.")
             raise ValueError("Embedding table does not exist. Please create it with the desired dimension first.")
         return table
+    
+    def create_all_tables(self, embedding_dim: int):
+        """
+        Create all necessary tables in the database.
+        """
+        self.create_metadata_table()
+        self.create_embedding_table(embedding_dim)
+        self.create_preference_table()
+        
+    def drop_all_tables(self):
+        """
+        Drop all tables in the database.
+        """
+        self.drop_metadata_table()
+        self.drop_embedding_table()
+        self.drop_preference_table()
+    
+    def create_preference_table(self):
+        """
+        Create the preference table in the database.
+        """
+        table = self.db.create_table(
+            name = PREFERENCE_TABLE, 
+            schema = PREFERENCE_SCHEMA,
+            exist_ok=True
+        )
+
+        table.create_scalar_index(ID)
+        table.create_scalar_index(PREFERENCE, index_type="BITMAP")
+
+        return table
+    
+    def drop_preference_table(self):
+        try:
+            self.db.drop_table(PREFERENCE_TABLE)
+            logger.info("Dropped preference table.")
+        except Exception as e:
+            logger.warning(f"Error dropping preference table: {e}, no action taken.")
     
     def create_metadata_table(self):
         """
@@ -72,6 +119,8 @@ class PaperManager:
             exist_ok=True
         )
         table.create_scalar_index(ID)
+        self.create_vector_index()
+        
         return table
     
     def drop_embedding_table(self):
@@ -81,6 +130,19 @@ class PaperManager:
         except Exception as e:
             logger.warning(f"Error dropping embedding table: {e}, no action taken.")
 
+    def create_vector_index(self, metric: str = "cosine", num_partitions: int = 256, num_sub_vectors: int = 96):
+        """
+        Create a vector index for the embedding table.
+        Recommended: metric="cosine" for text embeddings, num_partitions=256 for 10k-100k rows.
+        """
+        self.embedding_table.create_index(
+            metric=metric, 
+            vector_column_name=EMBEDDING_VECTOR,
+            num_partitions=num_partitions, 
+            num_sub_vectors=num_sub_vectors
+        )
+        logger.info(f"Created vector index on '{EMBEDDING_VECTOR}' with metric={metric}, num_partitions={num_partitions}, num_sub_vectors={num_sub_vectors}")
+
     @property
     def embedding_dim(self) -> int | None:
         if EMBEDDING_TABLE not in self.db:
@@ -89,6 +151,7 @@ class PaperManager:
         schema = table.schema
         dim: int = schema.field(EMBEDDING_VECTOR).type.list_size
         return dim
+    
     
     def unembeded_papers(
         self, categories: list[str], 

@@ -12,7 +12,12 @@ from itertools import chain
 from tqdm import tqdm
 
 from .name import *
-from .schema import ARXIV_OAI_SNAPSHOT_PL_SCHEMA, PAPER_METADATE_PL_SCHEMA, ArxivRecord
+from .schema import *
+
+def load_preference_csv(file_path: str | Path) -> pl.DataFrame:
+    """Load user preference CSV file into a Polars DataFrame."""
+    df = pl.read_csv(file_path, schema=PREFERENCE_PL_SCHEMA)
+    return df
 
 def load_arxiv_oai_snapshot(file_path: str | Path) -> pl.DataFrame:
     """Load the arXiv OAI snapshot JSONL file into a Polars DataFrame."""

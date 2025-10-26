@@ -16,3 +16,6 @@ VERSIONS = "versions"
 
 EMBEDDING_TABLE = "paper_embedding"
 EMBEDDING_VECTOR = "embedding"
+
+PREFERENCE_TABLE = "paper_preference"
+PREFERENCE = "preference"
