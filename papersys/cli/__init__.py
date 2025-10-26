@@ -1,9 +1,15 @@
 """CLI commands for papersys."""
 
 import typer
+from dotenv import load_dotenv
+from ..const import BASE_DIR
 from .init_cmd import init
 from .embed_cmd import embed
 from .stat_cmd import stat
+from .optimize_cmd import optimize
+
+# Load environment variables before creating the app
+load_dotenv(BASE_DIR / ".env")
 
 app = typer.Typer(help="CLI entry point for papersys.")
 
@@ -11,6 +17,7 @@ app = typer.Typer(help="CLI entry point for papersys.")
 app.command(help="Initialize Database from Arxiv OAI File hosted on Kaggle")(init)
 app.command(help="Embed papers in the database using the specified embedding model.")(embed)
 app.command(help="Display statistics and status for database tables.")(stat)
+app.command(help="Optimize database tables ")(optimize)
 
 
 @app.callback()
@@ -19,4 +26,4 @@ def main() -> None:
     pass
 
 
-__all__ = ["app", "init", "embed", "stat"]
+__all__ = ["app", "init", "embed", "stat", "optimize"]

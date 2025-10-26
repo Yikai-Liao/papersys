@@ -6,10 +6,11 @@ from loguru import logger
 
 from ..const import BASE_DIR, DATA_DIR
 from ..config import AppConfig, load_config
+from ..database.manager import PaperManager
 
 
 def _init_metadata_table(
-    manager,
+    manager: PaperManager,
     oai_file: Path,
     force: bool = False,
 ):
@@ -52,7 +53,7 @@ def _init_metadata_table(
 
 
 def _init_embedding_table(
-    manager,
+    manager: PaperManager,
     embedding_file: Path,
     embedding_dim: int,
     force: bool = False,
@@ -87,7 +88,7 @@ def _init_embedding_table(
 
 
 def _init_preference_table(
-    manager,
+    manager: PaperManager,
     preference_file: Path,
     force: bool = False,
 ):
@@ -111,9 +112,7 @@ def _init_preference_table(
     # Create preference table
     manager.create_preference_table()
     upsert(manager.preference_table, df)
-    
-    # Load preference data
-    logger.warning("Preference file loading not yet implemented.")
+
     # Add preference loading logic here when available
     
     logger.info("Preference table initialization complete.")
@@ -170,7 +169,7 @@ def init(
     logger.debug("Loaded config: {}", config)
     
     # Initialize database manager
-    manager = PaperManager(uri=str(DATA_DIR / config.database.name))
+    manager = PaperManager(uri=config.database.uri)
     
     # Initialize metadata table if OAI file is provided
     if oai_file is not None:
@@ -184,7 +183,7 @@ def init(
         embed_path = Path(embedding_file)
         if not embed_path.exists():
             raise FileNotFoundError(f"Embedding file not found: {embedding_file}")
-        _init_embedding_table(manager, embed_path, config.embedding.dim, force=force)
+    _init_embedding_table(manager, None, config.embedding.dim, force=force)
     
     # Initialize preference table if preference file is provided
     if preference_file is not None:

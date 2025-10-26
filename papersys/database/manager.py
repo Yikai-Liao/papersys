@@ -10,7 +10,21 @@ from .name import *
 
 
 class PaperManager:
-    def __init__(self, uri: str = "data/sample-lancedb"):
+    def __init__(self, uri: str = "data/sample_database"):
+        """初始化数据库管理器。
+        
+        Args:
+            uri: 数据库URI。
+                - 本地存储: "data/papersys" 
+                - CloudFlare R2: "s3://bucket-name/papersys"
+                - 其他S3兼容: "s3://bucket-name/path"
+        
+        注意：使用 S3/R2 时，需要设置环境变量：
+            - AWS_ACCESS_KEY_ID
+            - AWS_SECRET_ACCESS_KEY
+            - AWS_ENDPOINT (R2使用)
+            - AWS_DEFAULT_REGION (R2使用 "auto")
+        """
         logger.info(f"Connecting to database at {uri}")
         self.db = lancedb.connect(uri)
         
@@ -119,7 +133,7 @@ class PaperManager:
             exist_ok=True
         )
         table.create_scalar_index(ID)
-        self.create_vector_index()
+        # self.create_vector_index()
         
         return table
     
@@ -219,6 +233,11 @@ class PaperManager:
             columns=columns
         )
         return pl.from_arrow(out_tbl)
+    
+    def optimize(self):
+        self.embedding_table.optimize()
+        self.metadata_table.optimize()
+        self.preference_table.optimize()
         
 
 BATCH_SIZE = int(1e5)

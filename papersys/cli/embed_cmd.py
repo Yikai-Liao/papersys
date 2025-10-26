@@ -70,7 +70,7 @@ def embed(
     logger.debug("Loaded config: {}", config)
     
     # Initialize database manager
-    manager = PaperManager(uri=str(DATA_DIR / config.database.name))
+    manager = PaperManager(uri=config.database.uri)
     
     # Parse date parameters
     start_date = None

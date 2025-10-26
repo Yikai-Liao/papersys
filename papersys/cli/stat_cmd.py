@@ -46,7 +46,7 @@ def stat(
     config = load_config(AppConfig, config)
     
     # Initialize database manager
-    manager = PaperManager(uri=str(DATA_DIR / config.database.name))
+    manager = PaperManager(uri=config.database.uri)
     
     # Define tables to check
     tables_info = [
@@ -56,7 +56,7 @@ def stat(
     ]
     
     typer.echo("=" * 80)
-    typer.echo(f"Database Statistics: {DATA_DIR / config.database.name}")
+    typer.echo(f"Database Statistics: {config.database.uri}")
     typer.echo("=" * 80)
     typer.echo()
     

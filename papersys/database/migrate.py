@@ -16,7 +16,7 @@ from .schema import *
 
 def load_preference_csv(file_path: str | Path) -> pl.DataFrame:
     """Load user preference CSV file into a Polars DataFrame."""
-    df = pl.read_csv(file_path, schema=PREFERENCE_PL_SCHEMA)
+    df = pl.read_csv(file_path, schema=PREFERENCE_PL_SCHEMA).unique(subset=[ID])
     return df
 
 def load_arxiv_oai_snapshot(file_path: str | Path) -> pl.DataFrame:
