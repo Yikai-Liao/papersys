@@ -4,6 +4,7 @@ import pyarrow.compute as pc
 import lancedb
 from pathlib import Path
 from loguru import logger
+from datetime import date
 from .schema import PAPER_METADATA_SCHEMA, paper_embedding_schema
 from .name import *
 
@@ -89,16 +90,38 @@ class PaperManager:
         dim: int = schema.field(EMBEDDING_VECTOR).type.list_size
         return dim
     
-    def unembeded_papers(self, categories: list[str], columns: None|list[str]) -> pl.DataFrame:
+    def unembeded_papers(
+        self, categories: list[str], 
+        columns: None|list[str],
+        start: date | None = None,
+        end: date | None = None
+    ) -> pl.DataFrame:
 
         # 1) Only take the ID column from the embeddings table (Arrow), avoid loading/converting the entire table
         emb_ds = self.embedding_table.to_lance()
         emb_ids_tbl = emb_ds.to_table(columns=[ID])                # Only 1 column
         emb_ids_arr = emb_ids_tbl.column(ID).combine_chunks()
 
-        # 2) Only take ID + CATEGORIES two columns from metadata to local
+        # 2) Build time range filter expression (if start/end are provided)
         meta_ds = self.metadata_table.to_lance()
-        meta_two_cols = meta_ds.to_table(columns=[ID, CATEGORIES])  # Only 2 columns
+        time_filter = None
+        if start is not None or end is not None:
+            # Convert Python date to Arrow date32 scalar for comparison
+            if start is not None:
+                start_scalar = pa.scalar(start, type=pa.date32())
+                # (publish_date >= start) | (update_date >= start)
+                time_filter = (pc.field(PUBLISH_DATE) >= start_scalar) | (pc.field(UPDATE_DATE) >= start_scalar)
+            if end is not None:
+                end_scalar = pa.scalar(end, type=pa.date32())
+                # (publish_date <= end) | (update_date <= end)
+                end_cond = (pc.field(PUBLISH_DATE) <= end_scalar) | (pc.field(UPDATE_DATE) <= end_scalar)
+                time_filter = end_cond if time_filter is None else (time_filter & end_cond)
+        
+        # 3) Only take ID + CATEGORIES columns from metadata, with time filter applied at Lance level
+        meta_two_cols = meta_ds.to_table(
+            columns=[ID, CATEGORIES],
+            filter=time_filter
+        )
         undembedd = pl.from_arrow(meta_two_cols)
 
         # 3) Use Polars to filter, select paper ID columns that match the categories

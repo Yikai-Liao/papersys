@@ -114,9 +114,22 @@ def embed(
         "-d",
         help="Perform a dry run without actually writing embeddings to the database.",
     ),
+    start: str | None = typer.Option(
+        None,
+        "--start",
+        "-s",
+        help="Start date for filtering papers (format: YYYY-MM-DD). Papers with publish_date or update_date >= start will be included.",
+    ),
+    end: str | None = typer.Option(
+        None,
+        "--end",
+        "-e",
+        help="End date for filtering papers (format: YYYY-MM-DD). Papers with publish_date or update_date <= end will be included.",
+    ),
 ):
     import pyarrow as pa
     import numpy as np
+    from datetime import datetime
     from papersys.database.manager import PaperManager, upsert, add
     from papersys.embedding import google_batch_embedding, collect_content
     from papersys.database.name import ID, TITLE, ABSTRACT
@@ -129,10 +142,33 @@ def embed(
     # Initialize database manager
     manager = PaperManager(uri=str(DATA_DIR / config.database.name))
     
+    # Parse date parameters
+    start_date = None
+    end_date = None
+    if start is not None:
+        try:
+            start_date = datetime.strptime(start, "%Y-%m-%d").date()
+            logger.info("Filtering papers with dates >= {}", start_date)
+        except ValueError:
+            logger.error("Invalid start date format: {}. Expected YYYY-MM-DD.", start)
+            raise typer.Exit(code=1)
+    if end is not None:
+        try:
+            end_date = datetime.strptime(end, "%Y-%m-%d").date()
+            logger.info("Filtering papers with dates <= {}", end_date)
+        except ValueError:
+            logger.error("Invalid end date format: {}. Expected YYYY-MM-DD.", end)
+            raise typer.Exit(code=1)
+    
     # Filtering out papers to embed
     logger.info("Starting to collect papers to embed.")
     start_time = time.time()
-    df = manager.unembeded_papers(config.paper.categories, columns = [ID, TITLE, ABSTRACT])
+    df = manager.unembeded_papers(
+        config.paper.categories, 
+        columns=[ID, TITLE, ABSTRACT],
+        start=start_date,
+        end=end_date
+    )
     if limit is not None:
         df = df.head(limit)
     end_time = time.time()
@@ -169,11 +205,7 @@ def embed(
         ID
     )
     logger.debug("After upsert, embedding table has {} records", len(manager.embedding_table))
-    
-    
-    
-    
-    
+
 
 if __name__ == "__main__":
     app()
