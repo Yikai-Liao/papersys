@@ -46,6 +46,12 @@ def embed(
         "-e",
         help="End date for filtering papers (format: YYYY-MM-DD). Papers with publish_date or update_date <= end will be included.",
     ),
+    batch_size : int = typer.Option(
+        500,
+        "--batch-size",
+        "-b",
+        help="Number of documents to process in each embedding batch.",
+    )
 ):
     """
     Embed papers in the database using the specified embedding model.
@@ -61,7 +67,7 @@ def embed(
     import numpy as np
     from datetime import datetime
     from papersys.database.manager import PaperManager, upsert, add
-    from papersys.embedding import google_batch_embedding_with_rate_limit, collect_content
+    from papersys.embedding import google_batch_embedding_with_rate_limit, collect_content, google_batch_embedding
     from papersys.database.name import ID, TITLE, ABSTRACT
     
     # Load config
@@ -105,35 +111,67 @@ def embed(
     logger.info("Collected {} unembedded papers in {:.2f} seconds", len(df), end_time - start_time)
     
     contents = collect_content(df)
+    logger.debug("Example content to embed: {}", contents[0] if contents else "No content")
     
     logger.info("Embedding {} papers using model {}", len(contents), config.embedding.model)
     
-    time_start = time.time()
-    embeddings: np.ndarray = google_batch_embedding_with_rate_limit(
-        model=config.embedding.model,
-        inputs=contents,
-        output_dimensionality=config.embedding.dim,
-        dtype = np.float16,
-        batch_size=5000,
-        tokens_per_minute=500_000,
-    )
-    time_end = time.time()
+    # time_start = time.time()
+    # embeddings: np.ndarray = google_batch_embedding_with_rate_limit(
+    #     model=config.embedding.model,
+    #     inputs=contents,
+    #     output_dimensionality=config.embedding.dim,
+    #     dtype = np.float16,
+    #     batch_size=500,
+    #     tokens_per_minute=500_000,
+    # )
+    # time_end = time.time()
     
-    logger.info("Generated embeddings in {:.2f} seconds", time_end - time_start)
-    if dry_run:
-        logger.info("Dry run enabled, skipping database update.")
-        return
+    # logger.info("Generated embeddings in {:.2f} seconds", time_end - time_start)
+    # if dry_run:
+    #     logger.info("Dry run enabled, skipping database update.")
+    #     return
     
-    logger.debug("Before upsert, embedding table has {} records", len(manager.embedding_table))
-    upsert(
-        manager.embedding_table,
-        pa.Table.from_arrays(
-            [
-                pa.array(df[ID].to_list()),
-                pa.array(embeddings.tolist(), type=pa.list_(pa.float16(), len(embeddings[0]))),
-            ],
-            names=[ID, "embedding"],
-        ),
-        ID
-    )
-    logger.debug("After upsert, embedding table has {} records", len(manager.embedding_table))
+    # logger.debug("Before upsert, embedding table has {} records", len(manager.embedding_table))
+    # upsert(
+    #     manager.embedding_table,
+    #     pa.Table.from_arrays(
+    #         [
+    #             pa.array(df[ID].to_list()),
+    #             pa.array(embeddings.tolist(), type=pa.list_(pa.float16(), len(embeddings[0]))),
+    #         ],
+    #         names=[ID, "embedding"],
+    #     ),
+    #     ID
+    # )
+    # logger.debug("After upsert, embedding table has {} records", len(manager.embedding_table))
+    from tqdm import tqdm
+    pbar = tqdm(range(0, len(contents), batch_size), unit="batch", desc="Embedding batches")
+    for batch_start in pbar:
+        batch_end = min(batch_start + batch_size, len(contents))
+        batch_contents = contents[batch_start:batch_end]
+        batch_ids = df[ID].to_list()[batch_start:batch_end]
+        
+        embeddings: np.ndarray = google_batch_embedding(
+            model=config.embedding.model,
+            inputs=batch_contents,
+            output_dimensionality=config.embedding.dim,
+            dtype = np.float16,
+        )
+        
+        if dry_run:
+            logger.info("Dry run enabled, skipping database update for batch {}-{}.", batch_start, batch_end)
+            continue
+        
+        upsert(
+            manager.embedding_table,
+            pa.Table.from_arrays(
+                [
+                    pa.array(batch_ids),
+                    pa.array(embeddings.tolist(), type=pa.list_(pa.float16(), len(embeddings[0]))),
+                ],
+                names=[ID, "embedding"],
+            ),
+            ID
+        )
+        
+    logger.info("Embedding process completed.")
