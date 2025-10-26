@@ -89,7 +89,7 @@ class PaperManager:
         dim: int = schema.field(EMBEDDING_VECTOR).type.list_size
         return dim
     
-    def unembeded_papers(self, categories: list[str], use_scalar_index: bool = True) -> pl.DataFrame:
+    def unembeded_papers(self, categories: list[str], columns: None|list[str]) -> pl.DataFrame:
 
         # 1) Only take the ID column from the embeddings table (Arrow), avoid loading/converting the entire table
         emb_ds = self.embedding_table.to_lance()
@@ -116,6 +116,10 @@ class PaperManager:
         )
         # Convert Large String to String
         filtered_ids_arr = pa.array(filtered_ids_arr, type=pa.string())
+        
+        # When filtered_ids_arr is large, disable scalar index for better performance
+        use_scalar_index = True if len(filtered_ids_arr) < 10000 else False
+        logger.debug(f"Filtered IDs count: {len(filtered_ids_arr)}, Embedded IDs count: {len(emb_ids_arr)}, use_scalar_index={use_scalar_index}")
 
         # 4) Push the 'unembedded' condition to Lance (IN filtered_ids but NOT IN embedded_ids)
         needs_expr = pc.is_in(pc.field(ID), filtered_ids_arr)
@@ -126,6 +130,7 @@ class PaperManager:
         out_tbl = meta_ds.to_table(
             filter=final_expr,
             use_scalar_index=use_scalar_index,
+            columns=columns
         )
         return pl.from_arrow(out_tbl)
         
@@ -140,14 +145,17 @@ def __upsert(table, df: pl.DataFrame, primary_key: str = ID):
       .execute(df)
     return table
 
-def upsert(table, df: pl.DataFrame, primary_key: str = ID):
-    for i in range(0, df.height, BATCH_SIZE):
+def upsert(table, df: pl.DataFrame | pa.Table, primary_key: str = ID):
+    # Get the number of rows depending on the type
+    num_rows = df.height if isinstance(df, pl.DataFrame) else df.num_rows
+    for i in range(0, num_rows, BATCH_SIZE):
         batch_df = df[i:i+BATCH_SIZE]
         table = __upsert(table, batch_df, primary_key)
     return table
     
-def add(table, df: pl.DataFrame):
-    for i in range(0, df.height, BATCH_SIZE):
+def add(table, df: pl.DataFrame | pa.Table):
+    num_rows = df.height if isinstance(df, pl.DataFrame) else df.num_rows
+    for i in range(0, num_rows, BATCH_SIZE):
         batch_df = df[i:i+BATCH_SIZE]
         table.add(batch_df)
     return table

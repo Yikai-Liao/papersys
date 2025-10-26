@@ -3,9 +3,27 @@ import time
 from typing import Optional
 
 import numpy as np
+import polars as pl 
 from google import genai
 from google.genai import types
+from .database.name import *
 
+def collect_content(df: pl.DataFrame) -> list[str]:
+    CONTENT = "content"
+    df = df.lazy().with_columns(
+        pl.col(TITLE).fill_null(""),
+        pl.col(ABSTRACT).fill_null("")
+    )
+    contents = (
+        df.select(
+            (pl.col(TITLE) + "\n" + pl.col(ABSTRACT)).alias(CONTENT)
+        )
+        .collect()
+        .to_series()
+        .to_list()
+    )
+    return contents
+    
 
 def google_batch_embedding(
     model: str,
@@ -15,6 +33,7 @@ def google_batch_embedding(
     api_key: Optional[str] = None,
     max_wait_time: int = 600,
     poll_interval: int = 5,
+    dtype = np.float32,
 ) -> np.ndarray:
     """
     使用 Google Gemini Batch Embedding API 获取文本嵌入向量（价格为正常 API 的 50%）
@@ -104,7 +123,6 @@ def google_batch_embedding(
     responses = batch_job.dest.inlined_embed_content_responses
     embeddings = [resp.response.embedding.values for resp in responses]
     
-    # 转换为 numpy 数组
-    return np.array(embeddings, dtype=np.float32)
+    return np.array(embeddings, dtype=dtype)
     
     

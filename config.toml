@@ -8,4 +8,4 @@ model = "gemini-embedding-001"
 dim = "1536"
 
 [paper]
-categories = ["cs.AI", "cs.LG", "stat.ML"]
+categories = ["cs.CL", "cs.CV", "cs.AI", "cs.LG", "stat.ML", "cs.IR", "cs.CY"]

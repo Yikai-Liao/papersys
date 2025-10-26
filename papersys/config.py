@@ -53,9 +53,14 @@ class EmbeddingConfig(BaseConfig):
 
     model: str
     dim: int
+
+class PaperConfig(BaseConfig):
+    
+    categories: list[str]
     
 class AppConfig(BaseConfig):
     """Application configuration."""
 
     database: DatabaseConfig
     embedding: EmbeddingConfig
+    paper: PaperConfig

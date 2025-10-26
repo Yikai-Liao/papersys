@@ -1,4 +1,5 @@
 import typer
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -106,9 +107,72 @@ def embed(
         "--force",
         "-f",
         help="Force re-embedding of all papers, even if they already have embeddings.",
-    )
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        "-d",
+        help="Perform a dry run without actually writing embeddings to the database.",
+    ),
 ):
-    pass
+    import pyarrow as pa
+    import numpy as np
+    from papersys.database.manager import PaperManager, upsert, add
+    from papersys.embedding import google_batch_embedding, collect_content
+    from papersys.database.name import ID, TITLE, ABSTRACT
+    
+    # Load config
+    logger.info("Loading config from {}", config)
+    config = load_config(AppConfig, config)
+    logger.debug("Loaded config: {}", config)
+    
+    # Initialize database manager
+    manager = PaperManager(uri=str(DATA_DIR / config.database.name))
+    
+    # Filtering out papers to embed
+    logger.info("Starting to collect papers to embed.")
+    start_time = time.time()
+    df = manager.unembeded_papers(config.paper.categories, columns = [ID, TITLE, ABSTRACT])
+    if limit is not None:
+        df = df.head(limit)
+    end_time = time.time()
+    logger.info("Collected {} unembedded papers in {:.2f} seconds", len(df), end_time - start_time)
+    
+    contents = collect_content(df)
+    
+    logger.info("Embedding {} papers using model {}", len(contents), config.embedding.model)
+    
+    time_start = time.time()
+    embeddings: np.ndarray = google_batch_embedding(
+        model=config.embedding.model,
+        inputs=contents,
+        output_dimensionality=config.embedding.dim,
+        dtype = np.float16,
+    )
+    time_end = time.time()
+    
+    logger.info("Generated embeddings in {:.2f} seconds", time_end - time_start)
+    if dry_run:
+        logger.info("Dry run enabled, skipping database update.")
+        return
+    
+    logger.debug("Before upsert, embedding table has {} records", len(manager.embedding_table))
+    upsert(
+        manager.embedding_table,
+        pa.Table.from_arrays(
+            [
+                pa.array(df[ID].to_list()),
+                pa.array(embeddings.tolist(), type=pa.list_(pa.float16(), len(embeddings[0]))),
+            ],
+            names=[ID, "embedding"],
+        ),
+        ID
+    )
+    logger.debug("After upsert, embedding table has {} records", len(manager.embedding_table))
+    
+    
+    
+    
     
 
 if __name__ == "__main__":
