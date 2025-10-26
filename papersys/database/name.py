@@ -13,3 +13,6 @@ ABSTRACT = "abstract"
 UPDATE_DATE = "update_date"
 PUBLISH_DATE = "publish_date"
 VERSIONS = "versions"
+
+EMBEDDING_TABLE = "paper_embedding"
+EMBEDDING_VECTOR = "embedding"

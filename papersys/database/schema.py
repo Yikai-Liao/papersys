@@ -73,3 +73,12 @@ class ArxivRecord:
         if not isinstance(other, ArxivRecord):
             return NotImplemented
         return self.id == other.id
+    
+def paper_embedding_schema(dim: int) -> pa.Schema:
+    """Generate the schema for the embedding table."""
+    return pa.schema(
+        [
+            pa.field(ID, pa.string()),
+            pa.field(EMBEDDING_VECTOR, pa.list_(pa.float16(), dim)),
+        ]
+    )

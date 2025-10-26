@@ -1,0 +1,8 @@
+[database]
+name = "papersys"
+
+
+
+[embedding]
+model = "gemini-embedding-001"
+dim = "1536"

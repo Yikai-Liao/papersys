@@ -2,7 +2,7 @@ import polars as pl
 import lancedb
 from pathlib import Path
 from loguru import logger
-from .schema import PAPER_METADATA_SCHEMA
+from .schema import PAPER_METADATA_SCHEMA, paper_embedding_schema
 from .name import *
 
 
@@ -18,6 +18,15 @@ class PaperManager:
         except KeyError:
             logger.debug("Metadata table not found, creating a new one.")
             table = self.create_metadata_table()
+        return table
+    
+    @property
+    def embedding_table(self):
+        try:
+            table = self.db[EMBEDDING_TABLE]
+        except KeyError:
+            logger.debug("Embedding table not found, creating a new one.")
+            raise ValueError("Embedding table does not exist. Please create it with the desired dimension first.")
         return table
     
     def create_metadata_table(self):
@@ -43,6 +52,40 @@ class PaperManager:
         except Exception as e:
             logger.warning(f"Error dropping metadata table: {e}, no action taken.")
             
+    def create_embedding_table(self, dim: int):
+        """
+        Create the embedding table in the database.
+        """
+        if dim <= 0:
+            raise ValueError("Embedding dimension must be a positive integer.")
+        if EMBEDDING_TABLE in self.db:
+            existing_dim = self.embedding_dim
+            if existing_dim != dim:
+                raise ValueError(f"Embedding table already exists with dimension {existing_dim}, cannot create with dimension {dim}.")
+        
+        table = self.db.create_table(
+            name = EMBEDDING_TABLE, 
+            schema = paper_embedding_schema(dim),
+            exist_ok=True
+        )
+        table.create_scalar_index(ID)
+        return table
+    
+    def drop_embedding_table(self):
+        try:
+            self.db.drop_table(EMBEDDING_TABLE)
+            logger.info("Dropped embedding table.")
+        except Exception as e:
+            logger.warning(f"Error dropping embedding table: {e}, no action taken.")
+
+    @property
+    def embedding_dim(self) -> int | None:
+        if EMBEDDING_TABLE not in self.db:
+            return None
+        table = self.db[EMBEDDING_TABLE]
+        schema = table.schema
+        dim: int = schema.field(EMBEDDING_VECTOR).type.list_size
+        return dim
 
 BATCH_SIZE = int(1e5)
 
