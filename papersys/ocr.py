@@ -209,7 +209,7 @@ def response2md(ocr_response, output_dir: str | pathlib.Path, filename: str):
             md_parts.append(getattr(page, "markdown", ""))
     
     # 2. 合并 markdown 并替换图片路径
-    full_md = "\n".join(md_parts)
+    full_md = "\n\n".join(md_parts)
     for k, v in replacements.items():
         full_md = full_md.replace(k, v)
     
