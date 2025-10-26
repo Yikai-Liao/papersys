@@ -35,6 +35,17 @@ def init(
         help="Force re-initialization even if the database already exists.",
     ),
 ):
+    """
+    Initialize the database from the Arxiv OAI snapshot file.
+
+    This function loads Arxiv paper metadata from the specified OAI file
+    and inserts it into the database. If force is True, it forces re-initialization.
+
+    Parameters:
+        config (Path): Path to the configuration TOML file, defaults to BASE_DIR / "config.toml".
+        oai_file (str): Path to the Arxiv OAI file.
+        force (bool): Whether to force re-initialization of the database.
+    """
     from papersys.database.manager import PaperManager, upsert, add
     from papersys.database.migrate import load_arxiv_oai_snapshot
     
@@ -75,6 +86,29 @@ def init(
     manager.metadata_table.optimize()
     manager.embedding_table.optimize()
     logger.info("Database initialization complete.")
+    
+@app.command(help="Embed papers in the database using the specified embedding model.")
+def embed(
+    config: Path = typer.Option(
+        BASE_DIR / "config.toml",
+        "--config",
+        "-c",
+        help="Path to the configuration TOML file.",
+    ),
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        "-l",
+        help="Limit the number of papers to embed. If not set, embed all papers without embeddings.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Force re-embedding of all papers, even if they already have embeddings.",
+    )
+):
+    pass
     
 
 if __name__ == "__main__":

@@ -1,4 +1,6 @@
 import polars as pl
+import pyarrow as pa
+import pyarrow.compute as pc
 import lancedb
 from pathlib import Path
 from loguru import logger
@@ -86,6 +88,47 @@ class PaperManager:
         schema = table.schema
         dim: int = schema.field(EMBEDDING_VECTOR).type.list_size
         return dim
+    
+    def unembeded_papers(self, categories: list[str], use_scalar_index: bool = True) -> pl.DataFrame:
+
+        # 1) Only take the ID column from the embeddings table (Arrow), avoid loading/converting the entire table
+        emb_ds = self.embedding_table.to_lance()
+        emb_ids_tbl = emb_ds.to_table(columns=[ID])                # Only 1 column
+        emb_ids_arr = emb_ids_tbl.column(ID).combine_chunks()
+
+        # 2) Only take ID + CATEGORIES two columns from metadata to local
+        meta_ds = self.metadata_table.to_lance()
+        meta_two_cols = meta_ds.to_table(columns=[ID, CATEGORIES])  # Only 2 columns
+        undembedd = pl.from_arrow(meta_two_cols)
+
+        # 3) Use Polars to filter, select paper ID columns that match the categories
+        filtered_ids_arr = (
+            undembedd
+            .filter(
+                pl.col(CATEGORIES).list.eval(
+                    pl.any_horizontal([pl.element().str.starts_with(cat) for cat in categories])
+                ).list.any()
+            )
+            .select(pl.col(ID).cast(pl.Utf8))   # Explicitly cast to small string, convenient for aligning with schema.string
+            .to_arrow()                         # -> pa.Table
+            .column(0)                          # -> ChunkedArray
+            .combine_chunks()                   # -> pa.Array
+        )
+        # Convert Large String to String
+        filtered_ids_arr = pa.array(filtered_ids_arr, type=pa.string())
+
+        # 4) Push the 'unembedded' condition to Lance (IN filtered_ids but NOT IN embedded_ids)
+        needs_expr = pc.is_in(pc.field(ID), filtered_ids_arr)
+        not_emb_expr = pc.invert(pc.is_in(pc.field(ID), emb_ids_arr))
+        final_expr = not_emb_expr & needs_expr
+
+        # 5) Only take matching rows from Lance side (can specify columns to return, avoid pulling back large columns)
+        out_tbl = meta_ds.to_table(
+            filter=final_expr,
+            use_scalar_index=use_scalar_index,
+        )
+        return pl.from_arrow(out_tbl)
+        
 
 BATCH_SIZE = int(1e5)
 

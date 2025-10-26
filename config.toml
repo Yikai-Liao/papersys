@@ -6,3 +6,6 @@ name = "papersys"
 [embedding]
 model = "gemini-embedding-001"
 dim = "1536"
+
+[paper]
+categories = ["cs.AI", "cs.LG", "stat.ML"]
