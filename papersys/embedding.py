@@ -191,7 +191,7 @@ def google_batch_embedding(
     task_type: str = "RETRIEVAL_DOCUMENT",
     output_dimensionality: Optional[int] = None,
     api_key: Optional[str] = None,
-    max_wait_time: int = 600,
+    max_wait_time: int = 6000,
     poll_interval: int = 5,
     dtype = np.float32,
 ) -> np.ndarray:
