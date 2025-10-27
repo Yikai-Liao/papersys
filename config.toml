@@ -3,8 +3,8 @@
 # CloudFlare R2：使用 s3://bucket-name/path 格式
 # 注意：使用 R2 时需要在 .env 中配置相应的环境变量
 [database]
-uri = "data/lancedb"
-# uri = "s3://papersys/lancedb"
+# uri = "data/lancedb"
+uri = "s3://papersys/lancedb"
 
 [embedding]
 model = "gemini-embedding-001"
