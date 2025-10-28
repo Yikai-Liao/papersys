@@ -101,10 +101,13 @@ def recommend(
         help="End date (YYYY-MM-DD) for filtering papers.",
     ),
     limit: int | None = typer.Option(
-        20,
+        None,
         "--limit",
         "-l",
-        help="Number of top recommendations to display. Set to 0 to skip display.",
+        help=(
+            "Maximum number of recommendations to retain (for display and saving). "
+            "When omitted, no additional cap is applied."
+        ),
     ),
     output: Path | None = typer.Option(
         None,
@@ -170,7 +173,19 @@ def recommend(
         logger.warning("No papers met the recommendation criteria.")
         return
 
-    enriched = _enrich_with_metadata(manager, recommended)
+    if "show" in recommended.columns:
+        recommended = recommended.drop("show")
+
+    ranked = recommended.sort("score", descending=True)
+
+    if limit is not None:
+        if limit <= 0:
+            raise typer.BadParameter(
+                "--limit must be a positive integer.", param_name="limit"
+            )
+        ranked = ranked.head(limit)
+
+    enriched = _enrich_with_metadata(manager, ranked)
 
     if output is not None:
         _ensure_output_dir(output)
@@ -180,12 +195,10 @@ def recommend(
             enriched.write_csv(str(output))
         logger.info("Saved {} recommendations to {}", enriched.height, output)
 
-    if limit == 0:
-        return
-
-    display_df = enriched.sort("score", descending=True)
-    if limit is not None and limit > 0:
-        display_df = display_df.head(limit)
+    display_limit = 20 if limit is None else min(limit, enriched.height)
+    display_df = enriched
+    if display_limit is not None and display_limit < enriched.height:
+        display_df = display_df.head(display_limit)
 
     typer.echo(display_df)
 

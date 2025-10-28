@@ -18,45 +18,33 @@ def train_model(
     embedding_columns: list[str],
     config: RecommendConfig,
 ) -> sklearn.linear_model.LogisticRegression:
-    """训练推荐模型。
-    
-    Args:
-        prefered_df: 偏好数据，包含 preference 列（'like' 或 'dislike'）
-        remaining_df: 背景数据
-        embedding_columns: 嵌入列名列表
-        config: 推荐配置
-    
-    Returns:
-        训练好的逻辑回归模型
-    """
-    logger.info("开始训练模型...")
+    """Train the recommendation model."""
+    logger.info("Training logistic regression model")
 
-    # 转换标签：'like' -> 1, 'dislike' -> 0
+    # Convert labels: 'like' -> 1, 'dislike' -> 0
     prefered_df = prefered_df.with_columns(
         pl.when(pl.col("preference") == "like").then(1).otherwise(0).alias("label")
     ).select("label", *embedding_columns)
 
     remaining_df = remaining_df.select(*embedding_columns)
 
-    # 计算正样本数量
     positive_sample_num = prefered_df.filter(pl.col("label") == 1).height
-    logger.debug(f"正样本数量: {positive_sample_num}")
-
-    # 采样负样本
     neg_sample_num = int(config.neg_sample_ratio * positive_sample_num)
-    logger.debug(f"负样本数量: {neg_sample_num}")
+    logger.info(
+        f"Sampling negatives: {positive_sample_num} positive samples -> {neg_sample_num} negatives"
+    )
 
     pesudo_neg_df = remaining_df.sample(n=neg_sample_num, seed=config.seed)
     pesudo_neg_df = pesudo_neg_df.with_columns(pl.lit(0).alias("label")).select(
         "label", *embedding_columns
     )
 
-    # 合并数据
     combined_df = pl.concat([prefered_df, pesudo_neg_df], how="vertical")
-    logger.info(f"合并后的DataFrame大小: {combined_df.height} 行")
+    logger.info(
+        f"Training dataset ready: {combined_df.height} rows "
+        f"({positive_sample_num} positive, {neg_sample_num} negative)"
+    )
 
-    # 过滤向量内部包含 NaN 的样本
-    logger.info("开始过滤向量内部包含 NaN 的样本...")
     nan_mask = np.zeros(combined_df.height, dtype=bool)
     for col in embedding_columns:
         col_data = combined_df[col].to_list()
@@ -68,43 +56,41 @@ def train_model(
 
     removed_count = nan_mask.sum()
     if removed_count > 0:
+        removal_rate = removed_count / len(combined_df) * 100 if len(combined_df) else 0
         logger.warning(
-            f"过滤了 {removed_count}/{len(combined_df)} "
-            f"({removed_count/len(combined_df)*100:.2f}%) 个含 NaN 的样本"
+            f"Removed {removed_count}/{len(combined_df)} ({removal_rate:.2f}%) samples containing NaN values"
         )
         combined_df = combined_df.with_row_index("__idx__")
         valid_indices = np.where(~nan_mask)[0]
         combined_df = combined_df.filter(pl.col("__idx__").is_in(valid_indices)).drop(
             "__idx__"
         )
-        logger.info(f"过滤后的DataFrame大小: {combined_df.height} 行")
     else:
-        logger.info("✅ 没有向量内部包含 NaN 的样本")
+        logger.info("No NaN vectors detected in training dataset")
 
-    # 转换为 numpy 数组
     arrays = []
     for col in embedding_columns:
         col_arr = np.vstack(combined_df[col].to_numpy())
         nan_count = np.isnan(col_arr).sum()
         if nan_count > 0:
-            logger.warning(f"列 '{col}' 中有 {nan_count} 个 NaN，将替换为 0")
+            logger.warning(
+                f"Column '{col}' contains {nan_count} NaN values; filling with 0"
+            )
         arrays.append(col_arr)
 
     x = np.hstack(arrays)
     y = combined_df.select("label").to_numpy().ravel()
 
-    # 处理 NaN 值
     samples_with_nan = np.isnan(x).any(axis=1).sum()
     if samples_with_nan > 0:
-        logger.warning(f"将 {samples_with_nan} 个样本中的 NaN 值替换为 0")
+        logger.warning(f"Replacing NaN values in {samples_with_nan} samples with 0")
         x = np.nan_to_num(x, nan=0.0)
 
-    logger.info(f"特征矩阵: {x.shape}, 标签: {y.shape}")
+    logger.info(f"Training matrix shape: {x.shape}, labels shape: {y.shape}")
 
-    # 置信度加权采样
     cws_config = config.confidence_weighted_sampling
     if cws_config.enable:
-        logger.info("使用置信度加权采样...")
+        logger.info("Applying confidence-weighted sampling")
         tmp_model = sklearn.linear_model.LogisticRegression(
             C=config.logistic_regression.C,
             max_iter=config.logistic_regression.max_iter,
@@ -122,12 +108,13 @@ def train_model(
 
         x = np.concatenate((x[y == 0], new_positive_embedding))
         y = np.concatenate((y[y == 0], np.ones(new_positive_embedding.shape[0])))
-        logger.info(f"新的特征矩阵: {x.shape}, 新的标签: {y.shape}")
+        logger.info(
+            f"Post confidence-weighted sampling: features {x.shape}, labels {y.shape}"
+        )
 
-    # 自适应难度采样
     ads_config = config.adaptive_difficulty_sampling
     if ads_config.enable:
-        logger.info("使用自适应难度采样...")
+        logger.info("Applying adaptive-difficulty sampling")
         unlabeled_data = np.hstack(
             [np.vstack(remaining_df[col].to_numpy()) for col in embedding_columns]
         )
@@ -142,9 +129,10 @@ def train_model(
         )
         x = np.concatenate((x[y == 0], x_pos))
         y = np.concatenate((y[y == 0], np.ones(x_pos.shape[0])))
-        logger.info(f"采样后的特征矩阵: {x.shape}, 标签: {y.shape}")
+        logger.info(
+            f"Post adaptive sampling: features {x.shape}, labels {y.shape}"
+        )
 
-    # 训练最终模型
     final_model = sklearn.linear_model.LogisticRegression(
         C=config.logistic_regression.C,
         max_iter=config.logistic_regression.max_iter,
@@ -152,5 +140,5 @@ def train_model(
         class_weight="balanced",
     ).fit(x, y)
 
-    logger.info("模型训练完成")
+    logger.info("Model training complete")
     return final_model

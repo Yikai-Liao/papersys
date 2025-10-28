@@ -247,21 +247,19 @@ def summarize_texts(
     model: str = "gemini-2.5-flash",
     api_key: Optional[str] = None,
     use_batch: bool = True,
-    max_wait_time: int = 600,
-    poll_interval: int = 3,
+    poll_interval: int = 30,
 ) -> Dict[str, PaperSummary]:
     """
     对 dict[arxiv_id -> paper_text] 批量调用 Gemini 进行摘要，返回 dict[arxiv_id -> PaperSummary]。
     
-    优先尝试使用 Batch API（类似 embedding.py 的 batches.create 方式），如果失败则回退到逐文档调用。
+    使用 Batch API 进行异步处理，目标完成时间为 24 小时内。
     
     Args:
         inputs: 映射 arxiv id -> 论文全文（markdown 或纯文本）
         model: Gemini 模型名称，默认 "gemini-2.5-flash"
         api_key: Gemini API key（可选，未提供则从环境变量读取）
-        use_batch: 是否尝试使用 Batch API（默认 True）
-        max_wait_time: Batch job 最大等待时间（秒）
-        poll_interval: 轮询间隔（秒）
+        use_batch: 是否使用 Batch API（默认 True）
+        poll_interval: 轮询间隔（秒，默认 30）
         
     Returns:
         dict[arxiv_id, PaperSummary]: 摘要结果
@@ -272,174 +270,132 @@ def summarize_texts(
     
     results: Dict[str, PaperSummary] = {}
     
-    # 尝试 Batch API（参考 embedding.py 的 create_embeddings 方式）
-    if use_batch and len(texts) > 0:
-        try:
-            logger.info(f"尝试使用 Batch API 对 {len(texts)} 篇论文进行摘要...")
-            
-            # 构造 inlined_requests（每个文档一个 generate request）
-            # 参考 embedding 中的 inlined_requests 格式，但这里用 generate_content 的 request
-            # 注意：Batch API 对 generate_content 的支持可能因 SDK 版本有差异，这里 best-effort
-            requests = []
-            for text in texts:
-                req_content = f"{PROMPT_TEMPLATE}\n\n===== PAPER CONTENT =====\n\n{text}"
-                requests.append({"contents": req_content})
-            
-            # 尝试调用 batches.create（类似 embedding 的方式）
-            # 注意：generate_content 的 batch 接口名可能是 batches.create 而不是 create_embeddings
-            batch_job = client.batches.create(
-                model=model,
-                src={"inlined_requests": requests},
-                config={"display_name": f"papersys-summary-batch-{len(texts)}"},
-            )
-            
-            job_name = batch_job.name
-            logger.info(f"Batch job 已创建: {job_name}，开始轮询...")
-            
-            completed_states = {
-                "JOB_STATE_SUCCEEDED",
-                "JOB_STATE_FAILED",
-                "JOB_STATE_CANCELLED",
-                "JOB_STATE_EXPIRED",
-            }
-            
-            import time
-            start = time.time()
-            while True:
-                batch_job = client.batches.get(name=job_name)
-                state = getattr(batch_job.state, "name", batch_job.state)
-                if isinstance(state, str):
-                    state_str = state
-                else:
-                    state_str = str(state)
-                
-                if state_str in completed_states:
-                    break
-                    
-                elapsed = time.time() - start
-                if elapsed > max_wait_time:
-                    raise TimeoutError(f"Batch job 超时（{max_wait_time}秒）")
-                
-                logger.debug(f"Batch job 状态: {state_str}, 已等待 {elapsed:.1f}秒")
-                time.sleep(poll_interval)
-            
-            if state_str != "JOB_STATE_SUCCEEDED":
-                raise RuntimeError(f"Batch job 失败，状态: {state_str}")
-            
-            logger.success("Batch job 成功完成，开始解析结果...")
-            
-            # 尝试提取 inlined_responses（类似 embedding 的 inlined_embed_content_responses）
-            dest = getattr(batch_job, "dest", None)
-            if dest is None:
-                raise ValueError("batch_job.dest 为空")
-            
-            inlined = getattr(dest, "inlined_responses", None)
-            if inlined is None:
-                raise ValueError("dest.inlined_responses 为空")
-            
-            if len(inlined) != len(ids):
-                logger.warning(f"返回的 response 数量 ({len(inlined)}) 与输入不匹配 ({len(ids)})")
-            
-            # 解析每个 response
-            import json
-            for i, (aid, resp) in enumerate(zip(ids, inlined)):
-                try:
-                    # resp 可能有 .response 属性，里面包含生成的内容
-                    # 尝试提取文本（可能在 .response.text 或 .response.candidates[0].content.parts[0].text）
-                    raw_text = None
-                    if hasattr(resp, "response"):
-                        response_obj = resp.response
-                        # 尝试 .text
-                        if hasattr(response_obj, "text"):
-                            raw_text = response_obj.text
-                        # 尝试 .candidates
-                        elif hasattr(response_obj, "candidates") and response_obj.candidates:
-                            cand = response_obj.candidates[0]
-                            if hasattr(cand, "content") and hasattr(cand.content, "parts"):
-                                parts = cand.content.parts
-                                if parts and hasattr(parts[0], "text"):
-                                    raw_text = parts[0].text
-                    
-                    if raw_text is None:
-                        logger.warning(f"无法从 batch response[{i}] 提取文本，跳过 {aid}")
-                        results[aid] = PaperSummary()
-                        continue
-                    
-                    # 尝试解析为 JSON
-                    try:
-                        parsed = json.loads(raw_text)
-                        results[aid] = PaperSummary(**parsed)
-                    except json.JSONDecodeError:
-                        # 如果不是 JSON，尝试提取 JSON block（```json ... ```）
-                        import re
-                        match = re.search(r"```json\s*(\{.*?\})\s*```", raw_text, re.DOTALL)
-                        if match:
-                            parsed = json.loads(match.group(1))
-                            results[aid] = PaperSummary(**parsed)
-                        else:
-                            # 无法解析，放入 reasoning_step
-                            results[aid] = PaperSummary(reasoning_step=raw_text[:1000])
-                    
-                except Exception as e:
-                    logger.error(f"解析 batch response[{i}] 失败: {e}, aid={aid}")
-                    results[aid] = PaperSummary()
-            
-            logger.success(f"Batch API 成功处理 {len(results)} 篇论文")
-            return results
-            
-        except Exception as e:
-            logger.warning(f"Batch API 失败: {e}，回退到逐文档调用")
+    if not use_batch or len(texts) == 0:
+        logger.warning("Batch API 未启用或无输入，无法处理")
+        return results
     
-    # 回退：逐文档调用 models.generate_content
-    logger.info(f"使用逐文档调用模式处理 {len(texts)} 篇论文...")
+    logger.info(f"使用 Batch API 对 {len(texts)} 篇论文进行摘要...")
+    
+    # 构造 inline requests，每个 request 包含完整的配置
+    inline_requests = []
+    for text in texts:
+        req_content = f"{PROMPT_TEMPLATE}\n\n===== PAPER CONTENT =====\n\n{text}"
+        inline_requests.append({
+            'contents': [{
+                'parts': [{'text': req_content}],
+                'role': 'user'
+            }],
+            'config': {
+                'response_mime_type': 'application/json',
+                'response_schema': PaperSummary,
+            }
+        })
+    
+    # 创建 batch job
+    batch_job = client.batches.create(
+        model=model,
+        src=inline_requests,
+        config={
+            'display_name': f"papersys-summary-batch-{len(texts)}",
+        },
+    )
+    
+    job_name = batch_job.name
+    logger.info(f"Batch job 已创建: {job_name}")
+    logger.info("开始轮询 batch job 状态（目标完成时间: 24小时内，通常更快）...")
+    
+    completed_states = {
+        "JOB_STATE_SUCCEEDED",
+        "JOB_STATE_FAILED",
+        "JOB_STATE_CANCELLED",
+        "JOB_STATE_EXPIRED",
+    }
+    
+    import time
+    start = time.time()
+    while True:
+        batch_job = client.batches.get(name=job_name)
+        state = getattr(batch_job.state, "name", batch_job.state)
+        if isinstance(state, str):
+            state_str = state
+        else:
+            state_str = str(state)
+        
+        if state_str in completed_states:
+            break
+        
+        elapsed = time.time() - start
+        logger.info(f"Batch job 状态: {state_str}, 已等待 {elapsed/60:.1f} 分钟")
+        time.sleep(poll_interval)
+    
+    elapsed_total = time.time() - start
+    logger.info(f"Batch job 完成，总耗时: {elapsed_total/60:.1f} 分钟")
+    
+    if state_str != "JOB_STATE_SUCCEEDED":
+        error_msg = f"Batch job 失败，状态: {state_str}"
+        if hasattr(batch_job, 'error') and batch_job.error:
+            error_msg += f", 错误: {batch_job.error}"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
+    
+    logger.success("Batch job 成功完成，开始解析结果...")
+    
+    # 提取 inlined_responses
+    dest = getattr(batch_job, "dest", None)
+    if dest is None:
+        raise ValueError("batch_job.dest 为空")
+    
+    inlined = getattr(dest, "inlined_responses", None)
+    if inlined is None:
+        raise ValueError("dest.inlined_responses 为空")
+    
+    if len(inlined) != len(ids):
+        logger.warning(f"返回的 response 数量 ({len(inlined)}) 与输入不匹配 ({len(ids)})")
+    
+    # 解析每个 response
     import json
-    for aid, text in inputs.items():
+    for i, (aid, resp) in enumerate(zip(ids, inlined)):
         try:
-            prompt = f"{PROMPT_TEMPLATE}\n\n===== PAPER CONTENT =====\n\n{text}"
-            response = client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config={
-                    "response_mime_type": "application/json",
-                    "response_schema": PaperSummary,
-                },
-            )
-            
-            # 提取文本
-            raw_text = None
-            if hasattr(response, "text"):
-                raw_text = response.text
-            elif hasattr(response, "candidates") and response.candidates:
-                cand = response.candidates[0]
-                if hasattr(cand, "content") and hasattr(cand.content, "parts"):
-                    parts = cand.content.parts
-                    if parts and hasattr(parts[0], "text"):
-                        raw_text = parts[0].text
-            
-            if raw_text is None:
-                logger.warning(f"无法提取 response text for {aid}")
+            # 检查是否有错误
+            if hasattr(resp, 'error') and resp.error:
+                logger.error(f"Response[{i}] ({aid}) 有错误: {resp.error}")
                 results[aid] = PaperSummary()
                 continue
             
-            # 解析 JSON
+            # 提取响应文本
+            raw_text = None
+            if hasattr(resp, "response"):
+                response_obj = resp.response
+                # 优先使用 .text 快捷方式
+                if hasattr(response_obj, "text"):
+                    raw_text = response_obj.text
+                # 否则尝试从 candidates 中提取
+                elif hasattr(response_obj, "candidates") and response_obj.candidates:
+                    cand = response_obj.candidates[0]
+                    if hasattr(cand, "content") and hasattr(cand.content, "parts"):
+                        parts = cand.content.parts
+                        if parts and hasattr(parts[0], "text"):
+                            raw_text = parts[0].text
+            
+            if raw_text is None:
+                logger.warning(f"无法从 batch response[{i}] 提取文本，跳过 {aid}")
+                results[aid] = PaperSummary()
+                continue
+            
+            # 解析 JSON（因为指定了 response_mime_type 为 application/json，应该直接是 JSON）
             try:
                 parsed = json.loads(raw_text)
                 results[aid] = PaperSummary(**parsed)
-            except json.JSONDecodeError:
-                # 尝试提取 JSON block
-                import re
-                match = re.search(r"```json\s*(\{.*?\})\s*```", raw_text, re.DOTALL)
-                if match:
-                    parsed = json.loads(match.group(1))
-                    results[aid] = PaperSummary(**parsed)
-                else:
-                    results[aid] = PaperSummary(reasoning_step=raw_text[:1000])
-                    
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON 解析失败 for {aid}: {e}")
+                logger.debug(f"Raw text: {raw_text[:500]}")
+                results[aid] = PaperSummary(reasoning_step=raw_text[:1000])
+            
         except Exception as e:
-            logger.error(f"处理 {aid} 时出错: {e}")
+            logger.error(f"解析 batch response[{i}] 失败: {e}, aid={aid}")
             results[aid] = PaperSummary()
     
-    logger.success(f"逐文档调用完成，共处理 {len(results)} 篇论文")
+    logger.success(f"Batch API 成功处理 {len(results)} 篇论文")
     return results
 
 
@@ -448,8 +404,7 @@ def summarize_from_path_map(
     model: str = "gemini-2.5-flash",
     api_key: Optional[str] = None,
     use_batch: bool = True,
-    max_wait_time: int = 600,
-    poll_interval: int = 3,
+    poll_interval: int = 30,
 ) -> Dict[str, PaperSummary]:
     """
     从路径映射读取 markdown 文件并进行摘要。
@@ -500,6 +455,5 @@ def summarize_from_path_map(
         model=model,
         api_key=api_key,
         use_batch=use_batch,
-        max_wait_time=max_wait_time,
         poll_interval=poll_interval,
     )

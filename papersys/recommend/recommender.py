@@ -209,10 +209,12 @@ class Recommender:
             and self._pref_cache is not None
             and self._pref_cache_key == key
         ):
-            logger.info("Using cached preference data: {} rows", self._pref_cache.height)
+            logger.info(
+                f"Using cached preference data: {self._pref_cache.height} rows"
+            )
             return self._pref_cache
 
-        logger.info("Loading preference data...")
+        logger.info("Loading preference data")
 
         if refresh:
             self._meta_cache.pop(meta_key, None)
@@ -235,7 +237,9 @@ class Recommender:
 
         filtered_ids = meta_df.select(ID).to_series().to_list()
         if not filtered_ids:
-            logger.warning(f"No preference data matching categories {categories}")
+            logger.warning(
+                f"No preference data matching categories {categories}"
+            )
             return pl.DataFrame()
 
         logger.debug(f"After category filter: {len(filtered_ids)} rows")
@@ -248,7 +252,7 @@ class Recommender:
             .select(ID, PREFERENCE, EMBEDDING_VECTOR)
         )
 
-        logger.info(f"✅ Loaded {result.height} preference rows")
+        logger.info(f"Loaded {result.height} preference rows")
 
         self._pref_cache = result
         self._pref_cache_key = key
@@ -268,7 +272,7 @@ class Recommender:
     ) -> pl.DataFrame:
         """Load candidate paper embeddings."""
 
-        logger.info("Loading {} data...", purpose)
+        logger.info(f"Loading {purpose} data")
 
         meta_df = self._metadata_by_categories(
             categories,
@@ -279,34 +283,42 @@ class Recommender:
         logger.debug(f"Metadata after filter: {meta_df.height} rows")
 
         if meta_df.is_empty():
-            logger.warning("No eligible {} data", purpose)
+            logger.warning(f"No eligible {purpose} data")
             return pl.DataFrame()
 
         candidate_df = meta_df
         if exclude_ids:
             candidate_df = candidate_df.filter(~pl.col(ID).is_in(exclude_ids))
-            logger.debug(f"After excluding labeled: {candidate_df.height} rows")
+            logger.debug(
+                f"After excluding labeled: {candidate_df.height} rows"
+            )
 
         if candidate_df.is_empty():
-            logger.warning("No eligible {} data", purpose)
+            logger.warning(f"No eligible {purpose} data")
             return pl.DataFrame()
 
         candidate_ids = candidate_df.select(ID).to_series().to_list()
-        logger.debug(f"Candidate rows with embeddings: {len(candidate_ids)}")
+        logger.debug(
+            f"Candidate rows with embeddings: {len(candidate_ids)}"
+        )
 
         if sample_size is not None and sample_size < len(candidate_ids):
             import random
 
             random.seed(self.config.seed)
             sampled_ids = random.sample(candidate_ids, sample_size)
-            logger.info(f"Sampled {sample_size} from {len(candidate_ids)} for {purpose}")
+            logger.info(
+                f"Sampled {sample_size} from {len(candidate_ids)} for {purpose}"
+            )
         else:
             sampled_ids = candidate_ids
-            logger.info(f"Using all {len(sampled_ids)} candidates for {purpose}")
+            logger.info(
+                f"Using all {len(sampled_ids)} candidates for {purpose}"
+            )
 
         emb_df = self._load_embeddings_for_ids(sampled_ids)
 
-        logger.info(f"✅ Loaded {emb_df.height} {purpose} rows")
+        logger.info(f"Loaded {emb_df.height} {purpose} rows")
         return emb_df.select(ID, EMBEDDING_VECTOR)
 
     def load_training_background(
@@ -361,7 +373,9 @@ class Recommender:
         # Compute required background sample size
         positive_count = pref_data.filter(pl.col(PREFERENCE) == "like").height
         sample_size = int(positive_count * self.config.neg_sample_ratio)
-        logger.info(f"Positive samples: {positive_count}, negative sampling: {sample_size}")
+        logger.info(
+            f"Positive samples: {positive_count}, negative sampling: {sample_size}"
+        )
 
         # Load background (exclude labeled; sample IDs before reading embeddings)
         background_data = self.load_training_background(
@@ -420,7 +434,9 @@ class Recommender:
         if last_n_days is not None:
             end_date = date.today()
             start_date = end_date - timedelta(days=last_n_days)
-            logger.info(f"Using last {last_n_days} days: {start_date} to {end_date}")
+            logger.info(
+                f"Using last {last_n_days} days: {start_date} to {end_date}"
+            )
 
         categories_key = tuple(sorted(categories))
         if self._pref_cache is None or self._pref_cache_key != categories_key:
@@ -455,11 +471,13 @@ class Recommender:
 
         try:
             scores = self.model.predict_proba(X_target)[:, 1]
+            min_score = float(np.min(scores))
+            max_score = float(np.max(scores))
             logger.info(
-                f"Prediction complete. Score range: {np.min(scores):.4f} - {np.max(scores):.4f}"
+                f"Prediction complete. Score range: {min_score:.4f} - {max_score:.4f}"
             )
-        except Exception as e:
-            logger.error(f"Prediction failed: {e}")
+        except Exception as exc:
+            logger.error(f"Prediction failed: {exc}")
             raise
 
         # Adaptive sampling to determine recommendations
@@ -480,16 +498,16 @@ class Recommender:
         ).drop(EMBEDDING_VECTOR)
 
         recommended_count = np.sum(show_flags)
+        rate = recommended_count / result.height * 100 if result.height else 0
         logger.info(
-            f"Recommendation complete: {recommended_count}/{result.height} "
-            f"({recommended_count/result.height*100:.2f}%)"
+            f"Recommendation complete: {recommended_count}/{result.height} ({rate:.2f}%)"
         )
 
         return result
 
     def _filter_nan_embeddings(self, df: pl.DataFrame) -> pl.DataFrame:
         """Filter rows whose embedding vectors contain NaN."""
-        logger.info("Filtering embeddings containing NaN...")
+        logger.info("Filtering embeddings containing NaN values")
 
         nan_mask = np.zeros(df.height, dtype=bool)
         col_data = df[EMBEDDING_VECTOR].to_list()
@@ -501,15 +519,15 @@ class Recommender:
 
         removed_count = nan_mask.sum()
         if removed_count > 0:
+            removal_rate = removed_count / df.height * 100 if df.height else 0
             logger.warning(
-                f"Removed {removed_count}/{df.height} "
-                f"({removed_count/df.height*100:.2f}%) samples containing NaN"
+                f"Removed {removed_count}/{df.height} ({removal_rate:.2f}%) samples containing NaN"
             )
             df = df.with_row_index("__idx__")
             valid_indices = np.where(~nan_mask)[0]
             df = df.filter(pl.col("__idx__").is_in(valid_indices)).drop("__idx__")
             logger.info(f"After filtering: {df.height} rows")
         else:
-            logger.info("✅ No embeddings contain NaN")
+            logger.info("No embeddings contain NaN values")
 
         return df
