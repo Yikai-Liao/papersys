@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import argparse
 import base64
 import logging
 import mimetypes
 import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Sequence
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 from mdit_py_plugins.footnote import footnote_plugin
@@ -17,8 +16,6 @@ from mdit_py_plugins.texmath import texmath_plugin
 
 import ultimate_notion as uno
 from ultimate_notion.rich_text import Text, math as make_math, text as make_text
-
-from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -596,14 +593,6 @@ def _file_to_data_uri(path: Path) -> str:
     return f"data:{mime_type};base64,{encoded}"
 
 
-def _dataset_root() -> Path:
-    return Path(__file__).resolve().parents[2] / "example" / "ocr_responses"
-
-
-def _iter_markdown_files(root: Path) -> Iterable[Path]:
-    yield from sorted(root.glob("**/*.md"))
-
-
 def create_page_from_markdown(
     markdown_path: Path,
     *,
@@ -627,66 +616,4 @@ def create_page_from_markdown(
 
     page = session.create_page(parent=parent_page, title=page_title, blocks=blocks)
     return page
-
-
-def run_dataset_smoketest() -> None:
-    root = _dataset_root()
-    converter = MarkdownToNotionConverter()
-    count = 0
-    for md_file in _iter_markdown_files(root):
-        converter.convert_file(md_file)
-        count += 1
-    print(f"Processed {count} markdown files from {root}")
-
-
-def main() -> None:
-    project_root = Path(__file__).resolve().parents[2]
-    load_dotenv(project_root / ".env")
-
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("markdown", nargs="?", type=Path, help="Markdown file to convert")
-    parser.add_argument(
-        "--self-test",
-        action="store_true",
-        help="Run a smoke test against example/ocr_responses",
-    )
-    parser.add_argument(
-        "--parent",
-        type=str,
-        help="Parent Notion page ID or URL used when uploading the markdown",
-    )
-    parser.add_argument(
-        "--title",
-        type=str,
-        help="Override title for the created Notion page (defaults to file stem)",
-    )
-    args = parser.parse_args()
-
-    if args.self_test:
-        run_dataset_smoketest()
-        return
-
-    if args.markdown and args.parent:
-        page = create_page_from_markdown(
-            args.markdown,
-            parent=args.parent,
-            title=args.title,
-        )
-        print(f"Created page '{page.title}' -> {page.url}")
-        return
-
-    if args.parent and not args.markdown:
-        parser.error("--parent requires a markdown file to upload")
-
-    if args.markdown:
-        converter = MarkdownToNotionConverter()
-        blocks = converter.convert_file(args.markdown)
-        print(f"Generated {len(blocks)} blocks from {args.markdown}")
-        return
-
-    parser.print_help()
-
-
-if __name__ == "__main__":
-    main()
 
