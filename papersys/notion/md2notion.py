@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import base64
 import logging
-import mimetypes
 import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Sequence
+from typing import Iterable, Sequence
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 from mdit_py_plugins.footnote import footnote_plugin
@@ -94,11 +92,13 @@ class MarkdownToNotionConverter:
         *,
         session: uno.Session | None = None,
         highlight_color: uno.BGColor = uno.BGColor.YELLOW,
+        asset_cache: dict[Path, uno.AnyFile] | None = None,  # type: ignore[attr-defined]
     ) -> None:
         self.session = session
         self.highlight_color = highlight_color
         self._md = self._build_markdown()
         self._asset_root = Path.cwd()
+        self._asset_cache: dict[Path, uno.AnyFile] = asset_cache or {}  # type: ignore[attr-defined]
 
     @staticmethod
     def _build_markdown() -> MarkdownIt:
@@ -117,6 +117,20 @@ class MarkdownToNotionConverter:
         tokens = self._md.parse(markdown)
         blocks, _ = self._consume_blocks(tokens, 0)
         return blocks
+
+    def collect_local_asset_paths(self, markdown: str, *, asset_root: Path) -> set[Path]:
+        """Collect local asset paths referenced within the markdown."""
+
+        tokens = self._md.parse(markdown)
+        sources = self._extract_local_asset_sources(tokens)
+        candidates = {(asset_root / source).resolve() for source in sources}
+        return {path for path in candidates if path.exists()}
+
+    @property
+    def asset_cache(self) -> dict[Path, uno.AnyFile]:  # type: ignore[attr-defined]
+        """Access the cached mapping of local asset paths to uploaded Notion files."""
+
+        return self._asset_cache
 
     def convert_file(self, path: Path) -> list[uno.Block]:
         """Load a Markdown file and convert it."""
@@ -568,7 +582,8 @@ class MarkdownToNotionConverter:
         source = source.strip()
         if not source:
             return None
-        if source.startswith("http://") or source.startswith("https://"):
+
+        if self._is_external_source(source):
             return uno.url(source)
 
         path = (self._asset_root / source).resolve()
@@ -576,21 +591,45 @@ class MarkdownToNotionConverter:
             logger.warning("Image path '%s' does not exist", path)
             return None
 
+        cached = self._asset_cache.get(path)
+        if cached is not None:
+            return cached
+
         if self.session is not None:
             with path.open("rb") as stream:
                 uploaded = self.session.upload(stream, file_name=path.name)
+            self._asset_cache[path] = uploaded
             return uploaded
 
-        data_uri = _file_to_data_uri(path)
-        return uno.url(data_uri)
+        raise RuntimeError(
+            "Local assets require an active Notion session or pre-uploaded cache.",
+        )
 
+    def _extract_local_asset_sources(self, tokens: Sequence[Token]) -> set[str]:
+        sources: set[str] = set()
 
-def _file_to_data_uri(path: Path) -> str:
-    mime_type, _ = mimetypes.guess_type(path.name)
-    mime_type = mime_type or "application/octet-stream"
-    raw = path.read_bytes()
-    encoded = base64.b64encode(raw).decode("ascii")
-    return f"data:{mime_type};base64,{encoded}"
+        def _visit(token_seq: Iterable[Token]) -> None:
+            for token in token_seq:
+                if token.type == "image":
+                    attrs = _attr_dict(token)
+                    src = attrs.get("src") or ""
+                    if src and not self._is_external_source(src):
+                        sources.add(src)
+                if token.type in {"html_inline", "html_block"} and token.content:
+                    for match in re.finditer(r'src=["\']([^"\']+)["\']', token.content, flags=re.IGNORECASE):
+                        src = match.group(1)
+                        if src and not self._is_external_source(src):
+                            sources.add(src)
+                if token.children:
+                    _visit(token.children)
+
+        _visit(tokens)
+        return sources
+
+    @staticmethod
+    def _is_external_source(source: str) -> bool:
+        lowered = source.lower()
+        return lowered.startswith("http://") or lowered.startswith("https://") or lowered.startswith("data:")
 
 
 def create_page_from_markdown(
@@ -616,4 +655,3 @@ def create_page_from_markdown(
 
     page = session.create_page(parent=parent_page, title=page_title, blocks=blocks)
     return page
-
