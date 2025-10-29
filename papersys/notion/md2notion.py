@@ -1,4 +1,4 @@
-"""Convert Markdown documents to Ultimate Notion blocks using markdown-it-py."""
+"""Utilities for converting Markdown documents into Ultimate Notion pages."""
 
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ from mdit_py_plugins.texmath import texmath_plugin
 
 import ultimate_notion as uno
 from ultimate_notion.rich_text import Text, math as make_math, text as make_text
+
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +109,7 @@ class MarkdownToNotionConverter:
         md.use(texmath_plugin, delimiters="dollars")
         md.use(footnote_plugin)
         md.enable("strikethrough")
+        md.enable("table")
         return md
 
     def convert(self, markdown: str, *, asset_root: Path | None = None) -> list[uno.Block]:
@@ -194,6 +197,14 @@ class MarkdownToNotionConverter:
                 quote, index = self._consume_blockquote(tokens, index)
                 if quote is not None:
                     blocks.append(quote)
+                continue
+
+            if token.type == "table_open":
+                table, attachments, index = self._consume_table(tokens, index)
+                if table is not None:
+                    blocks.append(table)
+                if attachments:
+                    blocks.extend(attachments)
                 continue
 
             # Skip any tokens we don't explicitly handle
@@ -332,6 +343,110 @@ class MarkdownToNotionConverter:
         for child in children:
             quote.append(child)
         return quote, index
+
+    def _consume_table(
+        self, tokens: Sequence[Token], index: int
+    ) -> tuple[uno.Table | None, list[uno.Block], int]:
+        """Convert a Markdown table into a Notion table block."""
+
+        index += 1  # skip table_open
+        header_cells: list[Text] = []
+        body_rows: list[list[Text]] = []
+        attachments: list[uno.Block] = []
+
+        while index < len(tokens):
+            token = tokens[index]
+            if token.type == "thead_open":
+                header_cells, index, extra = self._consume_table_section(tokens, index, header=True)
+                attachments.extend(extra)
+                continue
+            if token.type == "tbody_open":
+                rows, index, extra = self._consume_table_section(tokens, index, header=False)
+                body_rows.extend(rows)
+                attachments.extend(extra)
+                continue
+            if token.type == "table_close":
+                index += 1
+                break
+            index += 1
+
+        if not header_cells and not body_rows:
+            return None, attachments, index
+
+        rows_to_write: list[list[Text]] = []
+        if header_cells:
+            rows_to_write.append(header_cells)
+        rows_to_write.extend(body_rows)
+
+        n_rows = len(rows_to_write)
+        n_cols = max((len(row) for row in rows_to_write), default=0)
+        if n_cols == 0:
+            return None, attachments, index
+
+        table = uno.Table(n_rows=max(1, n_rows), n_cols=n_cols, header_row=bool(header_cells))
+
+        for idx, cells in enumerate(rows_to_write):
+            normalized = self._normalize_table_cells(cells, expected_cols=n_cols)
+            table[idx] = normalized
+
+        return table, attachments, index
+
+    def _consume_table_section(
+        self,
+        tokens: Sequence[Token],
+        index: int,
+        *,
+        header: bool,
+    ) -> tuple[list[Text] | list[list[Text]], int, list[uno.Block]]:
+        rows: list[list[Text]] = []
+        attachments: list[uno.Block] = []
+        index += 1  # skip section_open
+
+        while index < len(tokens):
+            token = tokens[index]
+            if token.type == "tr_open":
+                cells, index, extra = self._consume_table_row(tokens, index)
+                rows.append(cells)
+                attachments.extend(extra)
+                continue
+            if token.type in {"thead_close", "tbody_close"}:
+                index += 1
+                break
+            index += 1
+
+        if header and rows:
+            return rows[0], index, attachments
+        return rows, index, attachments
+
+    def _consume_table_row(
+        self, tokens: Sequence[Token], index: int
+    ) -> tuple[list[Text], int, list[uno.Block]]:
+        cells: list[Text] = []
+        attachments: list[uno.Block] = []
+        index += 1  # skip tr_open
+
+        while index < len(tokens):
+            token = tokens[index]
+            if token.type in {"th_open", "td_open"}:
+                inline_token = tokens[index + 1]
+                result = self._render_inline(inline_token.children or [])
+                cells.append(result.text or make_text(""))
+                attachments.extend(result.attachments)
+                index += 3
+                continue
+            if token.type == "tr_close":
+                index += 1
+                break
+            index += 1
+
+        return cells, index, attachments
+
+    @staticmethod
+    def _normalize_table_cells(cells: Sequence[Text], *, expected_cols: int) -> list[Text]:
+        padded = list(cells)
+        if len(padded) < expected_cols:
+            padded.extend(make_text("") for _ in range(expected_cols - len(padded)))
+        return list(padded[:expected_cols])
 
     # ------------------------------------------------------------------
     # Inline level processing
@@ -482,11 +597,36 @@ def _file_to_data_uri(path: Path) -> str:
 
 
 def _dataset_root() -> Path:
-    return Path(__file__).resolve().parents[2] / "data" / "ocr_responses"
+    return Path(__file__).resolve().parents[2] / "example" / "ocr_responses"
 
 
 def _iter_markdown_files(root: Path) -> Iterable[Path]:
     yield from sorted(root.glob("**/*.md"))
+
+
+def create_page_from_markdown(
+    markdown_path: Path,
+    *,
+    parent: str,
+    title: str | None = None,
+    session: uno.Session | None = None,
+    converter: MarkdownToNotionConverter | None = None,
+) -> uno.Page:
+    """Upload a Markdown document to Notion as a brand-new page."""
+
+    if session is None:
+        session = uno.Session.get_or_create()
+
+    parent_page = session.get_page(parent)
+
+    if converter is None:
+        converter = MarkdownToNotionConverter(session=session)
+
+    blocks = converter.convert_file(markdown_path)
+    page_title = title.strip() if title else markdown_path.stem
+
+    page = session.create_page(parent=parent_page, title=page_title, blocks=blocks)
+    return page
 
 
 def run_dataset_smoketest() -> None:
@@ -500,18 +640,43 @@ def run_dataset_smoketest() -> None:
 
 
 def main() -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    load_dotenv(project_root / ".env")
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("markdown", nargs="?", type=Path, help="Markdown file to convert")
     parser.add_argument(
         "--self-test",
         action="store_true",
-        help="Run a smoke test against data/ocr_responses",
+        help="Run a smoke test against example/ocr_responses",
+    )
+    parser.add_argument(
+        "--parent",
+        type=str,
+        help="Parent Notion page ID or URL used when uploading the markdown",
+    )
+    parser.add_argument(
+        "--title",
+        type=str,
+        help="Override title for the created Notion page (defaults to file stem)",
     )
     args = parser.parse_args()
 
     if args.self_test:
         run_dataset_smoketest()
         return
+
+    if args.markdown and args.parent:
+        page = create_page_from_markdown(
+            args.markdown,
+            parent=args.parent,
+            title=args.title,
+        )
+        print(f"Created page '{page.title}' -> {page.url}")
+        return
+
+    if args.parent and not args.markdown:
+        parser.error("--parent requires a markdown file to upload")
 
     if args.markdown:
         converter = MarkdownToNotionConverter()
