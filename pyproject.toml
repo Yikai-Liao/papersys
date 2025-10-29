@@ -19,6 +19,7 @@ dependencies = [
     "tqdm>=4.67.1",
     "typer>=0.20.0",
     "ultimate-notion>=0.9.5",
+    "notion-client>=2.5.0",
 ]
 
 [project.scripts]

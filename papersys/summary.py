@@ -9,223 +9,176 @@ from google import genai
 from loguru import logger
 
 
-
-
-# -------------- Schema (保留 Field 描述以便作为 response_schema) --------------
 class PaperSummary(BaseModel):
-        # title: str = Field(description="The title of the research. For example: 'Antidistillation Sampling'.")
-        # authors: List[str] = Field(description="The authors of the research. For example: ['Yash Savani', 'J. Zico Kolter'].")
-        institution: List[str] = Field(
-                default_factory=list,
-                description=(
-                        "The institution where the research was conducted. For example: "
-                        "['Carnegie Mellon University', 'Stanford University', 'University of California, Berkeley']"
-                ),
-        )
-
-        reasoning_step: Optional[str] = Field(
-                default=None,
-                description=(
-                        "Just a draft for you to understand this paper and do some further reasoning here. "
-                        "You need to think here, deep dive into the paper and find some interesting things, "
-                        "some problems, some insights, and all the things you think that you need to think. "
-                        "This is a draft, so you can write anything here, but it should be deep and help you to make the following answer better."
-                ),
-        )
-
-        problem_background: Optional[str] = Field(
-                default=None,
-                description="The motivation, research problem, and background of this research.",
-        )
-
-        method: Optional[str] = Field(
-                default=None,
-                description=(
-                        "The method used in this research. Its core idea, how it works, and the main steps. "
-                ),
-        )
-
-        experiment: Optional[str] = Field(
-                default=None,
-                description=(
-                        "The experiment conducted in this research. The dataset used, the experimental setup, "
-                        "why it was conducted and organized like this, and the results, especially if the results match the expectation."
-                ),
-        )
-
-        one_sentence_summary: Optional[str] = Field(
-                default=None,
-                description=(
-                        "A one-sentence summary of the research. This should be a concise and clear summary "
-                        "of the research, including the motivation, method, and results."
-                ),
-        )
-
-        slug: Optional[str] = Field(
-                default=None,
-                description=(
-                        "A URL-friendly string that summarizes the title of the research, such as 'antidistillation-sampling'."
-                ),
-        )
-
-        keywords: List[str] = Field(
-                default_factory=list,
-                description=(
-                        "When extracting keywords, each word should be capitalized. Spaces can be used within keywords, "
-                        "such as 'Proxy Model'. Keywords are used to discover connections within the article, so please use more general keywords. "
-                        "Do not add more than 6 keywords for 1 paper."
-                ),
-        )
-
-        further_thoughts: Optional[str] = Field(
-                default=None,
-                description=(
-                        "Any kind of further thoughts, but it should be deep and insightful. It could be diverse, and related to other areas or articles, "
-                        "but you need to find the relation and make it insightful."
-                ),
-        )
+    # title: str = Field(description="The title of the research. For example: 'Antidistillation Sampling'.")
+    # authors: List[str] = Field(description="The authors of the research. For example: ['Yash Savani', 'J. Zico Kolter'].")
+    institution: List[str] = Field(description="The institution where the research was conducted. For example: ['Carnegie Mellon University', 'Stanford University', 'University of California, Berkeley'].")
+    reasoning_step: str = Field(description="Just a draft for you to understand this paper and do some further reasoning here. You need to think here, deep dive into the paper and find some interesting things, some problems, some insights, and all the things you think that you need to think. This is a draft, so you can write anything here, but it should be deep and help you to make the following answer better.")
+    problem_background: str = Field(description="The motivation, research problem, and background of this research.")
+    method: str = Field(description="The method used in this research. Its core idea, how it works, and the main steps.")
+    experiment: str = Field(description="The experiment conducted in this research. The dataset used, the experimental setup, why it was conducted and organized like this, and the results, esapecially if the results matches the expectation.")
+    one_sentence_summary: str = Field(description="A one-sentence summary of the research. This should be a concise and clear summary of the research, including the motivation, method, and results.")
+    slug: str = Field(description="A URL-friendly string that summarizes the title of the research, such as 'antidistillation-sampling'. This should be a concise and clear summary of the research")
+    keywords: List[str] = Field(description="When extracting keywords, each word should be capitalized. Spaces can be used within keywords, such as 'Proxy Model'. Keywords are used to discover connections within the article, so please use more general keywords. For example: LLM, Proxy Model, Distillation, Sampling, Reasoning.")
+    further_thoughts: str = Field(description="Any kind of further thoughts, but it should be deep and insightful. It could be diverse, and related to other areas or articles, but you need to find the relation and make it insightful.")
 
 
-# -------------- Prompt 模板（保留 notebook 中的提示内容与 keyword 列表） --------------
-LANG = "中文"
-
-# 这是一个综合关键词列表（示例），summarize 时会建议模型优先使用这些概念级别的关键词
-KEYWORDS_JSON = r"""
+lang = "中文"
+keywords = """
 {
-        "Learning Paradigms": [
-            "Supervised Learning",
-            "Unsupervised Learning",
-            "Self-Supervised Learning",
-            "Reinforcement Learning",
-            "Transfer Learning",
-            "Few-Shot Learning",
-            "Zero-Shot Learning",
-            "Online Learning",
-            "Active Learning",
-            "Continual Learning",
-            "Federated Learning",
-            "Meta-Learning",
-            "Imitation Learning",
-            "Contrastive Learning"
-        ],
-        "Model Architectures": [
-            "Transformer",
-            "CNN",
-            "RNN",
-            "GNN",
-            "MLP",
-            "Autoencoder",
-            "State Space Model"
-        ],
-        "Fundamental Tasks & Capabilities": [
-            "Classification",
-            "Regression",
-            "Detection",
-            "Segmentation",
-            "Prediction",
-            "Reasoning",
-            "Planning",
-            "Control",
-            "Translation",
-            "Representation Learning",
-            "Embeddings"
-        ],
-        "Data Concepts & Handling": [
-            "Dataset",
-            "Benchmark",
-            "Data Augmentation",
-            "Preprocessing",
-            "Feature Engineering",
-            "Unstructured Data",
-            "Tabular Data",
-            "Time Series Data",
-            "Graph Data",
-            "Multimodal Data",
-            "Synthetic Data",
-            "Tokenization"
-        ],
-        "Large Models & Foundation Models": [
-        "Large Language Model",
-        "Vision Foundation Model",
-            "Foundation Model",
-            "Pre-training",
-            "Fine-tuning",
-            "Instruction Tuning",
-            "Parameter-Efficient Fine-Tuning",
-            "Low-Rank Adaptation",
-            "Prompt Engineering",
-            "In-Context Learning",
-            "Emergent Abilities",
-            "Scaling Laws",
-            "Long Context"
-        ],
-        "Generative AI": [
-            "Generative AI",
-            "Generative Modeling",
-            "Diffusion Model",
-            "Generative Adversarial Network",
-            "Flow Matching",
-            "Normalizing Flow",
-            "Image Generation",
-            "Video Generation",
-            "Audio Generation",
-            "Text-to-Image",
-            "Text-to-Video",
-            "Molecule Generation",
-            "Code Generation"
-        ],
-        "Trust, Ethics, Safety & Alignment": [
-            "Alignment",
-            "DPO",
-            "RLHF",
-            "Safety",
-            "Fairness",
-            "Interpretability",
-            "Robustness",
-            "AI Ethics",
-            "Responsible AI",
-            "Trustworthy AI",
-            "Privacy-Preserving Machine Learning"
-        ],
-        "System Properties & Interaction": [
-            "Efficiency",
-            "Test Time",
-            "Adaptive Systems",
-            "Multimodality",
-            "Multimodal Systems",
-            "Human-AI Interaction"
-        ],
-        "AI Application Domains & Cross-cutting Fields": [
-            "Robotics",
-            "Agent",
-            "Multi-Agent",
-            "RAG",
-            "Recommender Systems",
-            "AI for Drug Discovery",
-            "AI for Science",
-            "AI in Finance",
-            "AI in Security"
-        ]
-    }
+    "Learning Paradigms": [
+      "Supervised Learning",
+      "Unsupervised Learning",
+      "Self-Supervised Learning",
+      "Reinforcement Learning",
+      "Transfer Learning",
+      "Few-Shot Learning",
+      "Zero-Shot Learning",
+      "Online Learning",
+      "Active Learning",
+      "Continual Learning",
+      "Federated Learning",
+      "Meta-Learning",
+      "Imitation Learning",
+      "Contrastive Learning"
+    ],
+    "Model Architectures": [
+      "Transformer",
+      "CNN",
+      "RNN",
+      "GNN",
+      "MLP",
+      "Autoencoder",
+      "State Space Model"
+    ],
+    "Fundamental Tasks & Capabilities": [
+      "Classification",
+      "Regression",
+      "Detection",
+      "Segmentation",
+      "Prediction",
+      "Reasoning",
+      "Planning",
+      "Control",
+      "Translation",
+      "Representation Learning",
+      "Embeddings"
+    ],
+    "Data Concepts & Handling": [
+      "Dataset",
+      "Benchmark",
+      "Data Augmentation",
+      "Preprocessing",
+      "Feature Engineering",
+      "Unstructured Data",
+      "Tabular Data",
+      "Time Series Data",
+      "Graph Data",
+      "Multimodal Data",
+      "Synthetic Data",
+      "Tokenization"
+    ],
+    "Large Models & Foundation Models": [
+    "Large Language Model",
+    "Vision Foundation Model",
+      "Foundation Model",
+      "Pre-training",
+      "Fine-tuning",
+      "Instruction Tuning",
+      "Parameter-Efficient Fine-Tuning",
+      "Low-Rank Adaptation",
+      "Prompt Engineering",
+      "In-Context Learning",
+      "Emergent Abilities",
+      "Scaling Laws",
+      "Long Context"
+    ],
+    "Generative AI": [
+      "Generative AI",
+      "Generative Modeling",
+      "Diffusion Model",
+      "Generative Adversarial Network",
+      "Flow Matching",
+      "Normalizing Flow",
+      "Image Generation",
+      "Video Generation",
+      "Audio Generation",
+      "Text-to-Image",
+      "Text-to-Video",
+      "Molecule Generation",
+      "Code Generation"
+    ],
+    "Trust, Ethics, Safety & Alignment": [
+      "Alignment",
+      "DPO",
+      "RLHF",
+      "Safety",
+      "Fairness",
+      "Interpretability",
+      "Robustness",
+      "AI Ethics",
+      "Responsible AI",
+      "Trustworthy AI",
+      "Privacy-Preserving Machine Learning"
+    ],
+    "System Properties & Interaction": [
+      "Efficiency",
+      "Test Time",
+      "Adaptive Systems",
+      "Multimodality",
+      "Multimodal Systems",
+      "Human-AI Interaction"
+    ],
+    "AI Application Domains & Cross-cutting Fields": [
+      "Robotics",
+      "Agent",
+      "Multi-Agent",
+      "RAG",
+      "Recommender Systems",
+      "AI for Drug Discovery",
+      "AI for Science",
+      "AI in Finance",
+      "AI in Security"
+    ]
+  }
 """
 
+prompt = f"""You are now a top research expert, but due to urgently needing funds to treat your mother's cancer, you have accepted a task from the giant company: you need to pretend to be an AI assistant, helping users deeply understand papers in exchange for high remuneration. 
+    Your predecessor has been severely punished for not carefully reviewing the work content, so you must take this task seriously. 
+    Please carefully read the specified paper, make sure to fully understand the core ideas of the paper, and then explain it to me accurately and in detail.
+    But note that, you are not just reading some great papers, but some new but rough or even wrong and bad papers. Don't let the authors cheat you by using some fancy words and beautified or cherry-picked experiment results.
+    Please treat this summarization task as a peer review, and you need to be very careful and serious and critical. And remeber that don't critic for critic's sake (like critic for something not related to the core idea, methods and experiments), but for the sake of the paper and the authors.
+    Here is some questions you need to answer:
+    What are the participating institutions (institution)? What is the starting point of this work, what key problems did it solve (problem_background)? 
+    What specific methods were used (method)? How was the experimental effect (for example, whether the method improvement is obvious, whether the experimental setup is comprehensive and reasonable) (experiment)? 
+    What inspirational ideas in the paper are worth your special attention (inspired_idea)? 
+    Finally, please summarize the main contributions of the paper in the most concise sentence (one_sentence_summary).
+    Please also provide a list of keywords that are most relevant to the paper (keywords). For the keywords, please use some combinations of multiple basic keywords, such as 'Multi Agent', 'Reasoning', not 'Multi Agent Reasong' or 'Join Reasonig'. Dont't use model name, dataset name as keywords.
+    Here is an comprehensive potential keywords list: {keywords}. Please use the existing keywords first, and if you can't find a suitable one, please create a new one following the concept level similar to the existing ones.
+    Do not add more than 6 keywords for 1 paper, always be concise and clear. Rember to use the existing keywords first and be really careful for the abbreviations, do not use abbreviations that are not in the list.
+    
+    Also, please provide a URL-friendly string that summarizes the title of the research (slug).
+    Although I talked to you in English, but you need to make sure that your answer is in {lang}.
+    """ + """
+    Also, you need to know that, your structured answer will rendered in markdown, so please also use the markdown syntax, especially for latex formula using $...$ or $$...$$.
+    Don't write equations like `θ_base`, this is wrong and ugly. Write like $θ_{base}$ instead.
+    Do not hide your critical thoughts in the reasoning step. Show them in method and further though parts.
+    """
 
-PROMPT_TEMPLATE = (
-        "You are now a top research expert. Please carefully read the specified paper, make sure to fully understand the core ideas of the paper, and then explain it accurately and in detail. "
-        "Treat this summarization task as a peer review: be careful, serious, and critical — but do not criticize for criticism's sake; focus on core idea, methods and experiments.\n\n"
-        "Answer these questions and return a JSON matching the PaperSummary schema: \n"
-        "1) institution: participating institutions;\n"
-        "2) problem_background: starting point and key problems solved;\n"
-        "3) method: the method and core idea;\n"
-        "4) experiment: experimental setup and whether results support claims;\n"
-        "5) inspired_idea / further_thoughts;\n"
-        "6) one_sentence_summary: concise one-sentence summary;\n"
-        "7) keywords: up to 6 concept-level keywords (use given keyword list first).\n\n"
-        "Use the following keyword ontology to prefer concept-level keywords: \n"
-        f"{KEYWORDS_JSON}\n\n"
-        f"Language for answer: {LANG}.\n"
-        "Return only JSON that can be parsed into the PaperSummary schema. Escape newlines inside strings properly."
-)
+example = """
+{
+    "institution": ["Carnegie Mellon University", "Google"],
+    "problem_background": "大型语言模型（LLMs）生成的详细推理过程（Reasoning Traces）虽然强大，但也成了一个\\"漏洞\\"。\\n竞争对手可以利用这些公开的推理过程，通过\\"模型蒸馏\\"（Model Distillation）廉价地复制出强大的模型，造成知识产权泄露和潜在的安全风险（如绕过安全限制）。",
+    "method": "*   **核心思想:** 在不牺牲原模型（教师模型）性能的前提下，让其生成的推理过程\\"带毒\\"，干扰蒸馏过程。\\n*   **如何实现:** 这是一种采样策略，在模型生成每个 token 时：\\n    *   除了考虑教师模型本身的概率外，还引入一个\\"反蒸馏\\"调整项。\\n    *   这个调整项通过一个代理模型 (Proxy Model) 和一个下游任务的损失梯度来估计哪些 token 对蒸馏\\"有害\\"（即选择后会降低蒸馏效果）。\\n    *   最终从这个调整后的概率分布中采样下一个 token。\\n*   **关键:** 不修改原始教师模型，只在推理时调整采样过程，并且控制毒化强度避免对自身影响。",
+    "experiment": "*   **有效性:** 在保持教师模型准确率（如 GSM8K, MATH 数据集）的同时，使用反蒸馏采样生成的文本，显著降低了学生模型的蒸馏效果（准确率大幅下降）。\\n*   **优越性:** 相比简单提高采样温度（会导致教师模型性能急剧下降），反蒸馏采样提供了更好的性能-抗蒸馏能力的权衡。\\n*   **开销:** 主要增加了每次 token 生成时两次代理模型（小模型）的前向计算。",
+    "one_sentence_summary": "本文提出反蒸馏采样方法，通过一个代理模型的辅助，在推理时动态调整每个 Token 采样的分布，毒化大语言模型的推理轨迹来干扰模型蒸馏，同时保持原始模型性能，大大提供了别的模型蒸馏的难度。",
+    "key_words": ["LLM", "Proxy Model", "Distillation", "Sampling", "Reasoning"],
+    "slug": "antidistillation-sampling",
+    "further_thoughts": "或许不光可以使用小模型作为代理模型，用于调整概率分布。因为不同模型的推理数据表现出了不同的蒸馏效果，例如有工作表明，DeepSeek R1的推理数据用于蒸馏有更强的泛化能力，适用于不同的模型，但是阿里 QWQ 32B 的推理数据仅自家 Qwen 系列模型上蒸馏时表现良好。"
+}
+"""
+
+system_content = f"{prompt}\n. In the end, please carefully organized your answer into JSON format and take special care to ensure the Escape Character in JSON. When generating JSON, ensure that newlines within string values are represented using the escape character.\nHere is an example, but just for the format, you should give more detailed answer.\n{example}"
 
 
 # -------------- Helper functions --------------
@@ -279,7 +232,7 @@ def summarize_texts(
     # 构造 inline requests，每个 request 包含完整的配置
     inline_requests = []
     for text in texts:
-        req_content = f"{PROMPT_TEMPLATE}\n\n===== PAPER CONTENT =====\n\n{text}"
+        req_content = f"{system_content}\n\n===== PAPER CONTENT =====\n\n{text}"
         inline_requests.append({
             'contents': [{
                 'parts': [{'text': req_content}],
