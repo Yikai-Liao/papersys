@@ -3,7 +3,7 @@
 import typer
 from pathlib import Path
 
-from ..const import BASE_DIR, DATA_DIR
+from ..const import BASE_DIR
 from ..config import AppConfig, load_config
 
 
@@ -38,8 +38,14 @@ def stat(
     import polars as pl
     from papersys.database.manager import PaperManager
     from papersys.database.name import (
-        PAPER_METADATA_TABLE, EMBEDDING_TABLE, PREFERENCE_TABLE,
-        ID, EMBEDDING_VECTOR
+        PAPER_METADATA_TABLE,
+        EMBEDDING_TABLE,
+        PREFERENCE_TABLE,
+        PAPER_SUMMARY_TABLE,
+        ID,
+        EMBEDDING_VECTOR,
+        SUMMARY_DATE,
+        SUMMARY_MODEL,
     )
     
     # Load config
@@ -53,6 +59,7 @@ def stat(
         (PAPER_METADATA_TABLE, "Paper Metadata Table"),
         (EMBEDDING_TABLE, "Paper Embedding Table"),
         (PREFERENCE_TABLE, "User Preference Table"),
+        (PAPER_SUMMARY_TABLE, "Paper Summary Table"),
     ]
     
     typer.echo("=" * 80)
@@ -103,6 +110,27 @@ def stat(
                     typer.echo(f"🎯 Embedding dimension: {dim}")
                 except Exception as e:
                     typer.echo(f"⚠️  Could not retrieve embedding dimension: {e}")
+            elif table_name == PAPER_SUMMARY_TABLE:
+                try:
+                    ds = table.to_lance()
+                    summary_info = ds.to_table(columns=[SUMMARY_MODEL, SUMMARY_DATE])
+                    summary_df = pl.from_arrow(summary_info)
+                    if summary_df.height > 0:
+                        latest_date = summary_df[SUMMARY_DATE].drop_nulls().max()
+                        models = (
+                            summary_df[SUMMARY_MODEL]
+                            .drop_nulls()
+                            .unique()
+                            .sort()
+                            .to_list()
+                        )
+                        if latest_date is not None:
+                            typer.echo(f"🗓️  Latest summary date: {latest_date}")
+                        typer.echo(f"🤖 Models: {', '.join(models) if models else 'Unknown'}")
+                    else:
+                        typer.echo("🗓️  No summary metadata available")
+                except Exception as e:
+                    typer.echo(f"⚠️  Could not retrieve summary metadata: {e}")
             
             # Show sample data if head is specified
             if head is not None and head > 0 and count > 0:

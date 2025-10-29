@@ -19,3 +19,18 @@ EMBEDDING_VECTOR = "embedding"
 
 PREFERENCE_TABLE = "paper_preference"
 PREFERENCE = "preference"
+
+PAPER_SUMMARY_TABLE = "paper_summary"
+
+INSTITUTION = "institution"
+REASONING_STEP = "reasoning_step"
+PROBLEM_BACKGROUND = "problem_background"
+METHOD = "method"
+EXPERIMENT = "experiment"
+ONE_SENTENCE_SUMMARY = "one_sentence_summary"
+SLUG = "slug"
+KEYWORDS = "keywords"
+FURTHER_THOUGHTS = "further_thoughts"
+SCORE = "score"
+SUMMARY_DATE = "summary_date"
+SUMMARY_MODEL = "summary_model"

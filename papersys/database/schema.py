@@ -94,3 +94,23 @@ PREFERENCE_PL_SCHEMA: Dict[str, pl.DataType] = dict([
     (ID, String),
     (PREFERENCE, String),
 ])
+
+PAPER_SUMMARY_SCHEMA = pa.schema([
+    pa.field(ID, pa.string()),
+    pa.field(TITLE, pa.string()),
+    pa.field(INSTITUTION, pa.list_(pa.string())),
+    pa.field(AUTHORS, pa.string()),
+    pa.field(PUBLISH_DATE, pa.date32()),
+    pa.field(UPDATE_DATE, pa.date32()),
+    pa.field(SUMMARY_DATE, pa.date32()),
+    pa.field(SUMMARY_MODEL, pa.string()),
+    pa.field(SCORE, pa.float32()),
+    pa.field(REASONING_STEP, pa.string()),
+    pa.field(PROBLEM_BACKGROUND, pa.string()),
+    pa.field(METHOD, pa.string()),
+    pa.field(EXPERIMENT, pa.string()),
+    pa.field(ONE_SENTENCE_SUMMARY, pa.string()),
+    pa.field(SLUG, pa.string()),
+    pa.field(KEYWORDS, pa.list_(pa.string())),
+    pa.field(FURTHER_THOUGHTS, pa.string()),
+])

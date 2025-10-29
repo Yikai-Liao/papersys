@@ -32,8 +32,8 @@ class PaperManager:
     def preference_table(self):
         try:
             table = self.db[PREFERENCE_TABLE]
-        except KeyError:
-            logger.debug("Preference table not found, creating a new one.")
+        except Exception as exc:
+            logger.debug("Preference table not found or inaccessible ({}), creating a new one.", exc)
             table = self.create_preference_table()
         return table
     
@@ -41,8 +41,8 @@ class PaperManager:
     def metadata_table(self):
         try:
             table = self.db[PAPER_METADATA_TABLE]
-        except KeyError:
-            logger.debug("Metadata table not found, creating a new one.")
+        except Exception as exc:
+            logger.debug("Metadata table not found or inaccessible ({}), creating a new one.", exc)
             table = self.create_metadata_table()
         return table
     
@@ -50,9 +50,18 @@ class PaperManager:
     def embedding_table(self):
         try:
             table = self.db[EMBEDDING_TABLE]
-        except KeyError:
-            logger.debug("Embedding table not found, creating a new one.")
+        except Exception:
+            logger.debug("Embedding table not found or inaccessible.")
             raise ValueError("Embedding table does not exist. Please create it with the desired dimension first.")
+        return table
+    
+    @property
+    def summary_table(self):
+        try:
+            table = self.db[PAPER_SUMMARY_TABLE]
+        except Exception as exc:
+            logger.debug("Paper summary table not found or inaccessible ({}), creating a new one.", exc)
+            table = self.create_summary_table()
         return table
     
     def create_all_tables(self, embedding_dim: int):
@@ -62,6 +71,7 @@ class PaperManager:
         self.create_metadata_table()
         self.create_embedding_table(embedding_dim)
         self.create_preference_table()
+        self.create_summary_table()
         
     def drop_all_tables(self):
         """
@@ -70,6 +80,31 @@ class PaperManager:
         self.drop_metadata_table()
         self.drop_embedding_table()
         self.drop_preference_table()
+        self.drop_summary_table()
+
+    def create_summary_table(self):
+        """
+        Create the paper summary table in the database.
+        """
+        table = self.db.create_table(
+            name = PAPER_SUMMARY_TABLE, 
+            schema = PAPER_SUMMARY_SCHEMA,
+            exist_ok=True
+        )
+        table.create_scalar_index(ID)
+        table.create_scalar_index(SCORE)
+        table.create_scalar_index(SUMMARY_DATE)
+        table.create_scalar_index(PUBLISH_DATE)
+        table.create_scalar_index(UPDATE_DATE)
+        table.create_scalar_index(KEYWORDS, index_type="LABEL_LIST")
+        return table
+    
+    def drop_summary_table(self):
+        try:
+            self.db.drop_table(PAPER_SUMMARY_TABLE)
+            logger.info("Dropped paper summary table.")
+        except Exception as e:
+            logger.warning(f"Error dropping paper summary table: {e}, no action taken.")
     
     def create_preference_table(self):
         """

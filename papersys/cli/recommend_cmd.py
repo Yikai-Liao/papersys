@@ -33,8 +33,7 @@ def _enrich_with_metadata(manager, df):
     import pyarrow as pa
     import pyarrow.compute as pc
 
-    from ..database.name import ID, TITLE, CATEGORIES, UPDATE_DATE
-
+    from ..database.name import ID, TITLE, PUBLISH_DATE, UPDATE_DATE
     if df.is_empty():
         return df
 
@@ -52,7 +51,7 @@ def _enrich_with_metadata(manager, df):
     filter_expr = pc.is_in(pc.field("id"), ids_array)
 
     meta_table = meta_ds.to_table(
-        columns=[ID, TITLE, CATEGORIES, UPDATE_DATE],
+        columns=[ID, TITLE, PUBLISH_DATE, UPDATE_DATE],
         filter=filter_expr,
         use_scalar_index=len(ids) < 10_000,
     )
