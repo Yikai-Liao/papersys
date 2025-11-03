@@ -1,17 +1,23 @@
-# 数据库配置
-# 本地存储：使用本地路径
-# CloudFlare R2：使用 s3://bucket-name/path 格式
-# 注意：使用 R2 时需要在 .env 中配置相应的环境变量
-[database]
-# uri = "data/lancedb"
-uri = "s3://papersys/lancedb"
+[metadata]
+hf_repo = "lyk/ArxivMetaData"
+parquet = "metadata.parquet"
 
 [embedding]
+hf_repo = "lyk/ArxivEmbedding"
+parquet = "embedding.parquet"
 model = "gemini-embedding-001"
 dim = 1536
 
 [paper]
 categories = ["cs.CL", "cs.CV", "cs.AI", "cs.LG", "stat.ML", "cs.IR", "cs.CY"]
+
+[git_store]
+# 独立 Git 仓库地址（可使用 HTTPS + token 或 SSH）
+repo_url = "https://github.com/your-org/papersys-data.git"
+branch = "main"
+# 相对于仓库根目录的路径
+summary_dir = "summaries"
+preference_file = "preferences.jsonl"
 
 [recommend]
 # 负样本采样比例

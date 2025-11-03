@@ -1,0 +1,3 @@
+[submodule "reference/ArxivEmbedding"]
+	path = reference/ArxivEmbedding
+	url = git@github.com:Yikai-Liao/ArxivEmbedding.git

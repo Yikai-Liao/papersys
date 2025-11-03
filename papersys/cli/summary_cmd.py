@@ -1,16 +1,15 @@
 """Summarize papers command."""
 
-from pathlib import Path
 from datetime import date
+from pathlib import Path
 
-import pyarrow as pa
+import polars as pl
 import typer
 from loguru import logger
 
-from ..const import BASE_DIR
 from ..config import AppConfig, load_config
-from ..database.manager import PaperManager, upsert
-from ..database.name import (
+from ..const import BASE_DIR
+from ..fields import (
     AUTHORS,
     EXPERIMENT,
     FURTHER_THOUGHTS,
@@ -19,7 +18,6 @@ from ..database.name import (
     KEYWORDS,
     METHOD,
     ONE_SENTENCE_SUMMARY,
-    PAPER_SUMMARY_TABLE,
     PROBLEM_BACKGROUND,
     PUBLISH_DATE,
     REASONING_STEP,
@@ -30,7 +28,7 @@ from ..database.name import (
     TITLE,
     UPDATE_DATE,
 )
-from ..database.schema import PAPER_SUMMARY_SCHEMA
+from ..storage.git_store import GitStore
 
 
 def summary(
@@ -75,12 +73,12 @@ def summary(
     ),
 ) -> None:
     """
-    Complete pipeline: OCR papers → Generate summaries → Save to parquet and database.
+    Complete pipeline: OCR papers → Generate summaries → Save to parquet and JSONL store.
 
     This command performs:
     1. Batch OCR processing of papers (converts PDFs to markdown + images)
     2. Batch AI summarization using Gemini API
-    3. Saves results to parquet and upserts into the summary table
+    3. Saves results to parquet and upserts into the JSONL summary store
 
     Examples:
         # Process papers from recommend output
@@ -89,13 +87,14 @@ def summary(
         # Custom output paths
         papersys summary --parquet recs.parquet --ocr-output data/ocr --output summaries.parquet
     """
-    import polars as pl
-
     from papersys.ocr import ocr_by_id_batch, response2md
     from papersys.summary import summarize_from_path_map
 
     logger.info("Loading config from {}", config)
     app_config = load_config(AppConfig, config)
+    git_store = GitStore(app_config.git_store)
+    git_store.ensure_local_copy()
+    summary_store = git_store.summary_store
 
     if not parquet.exists():
         logger.error("Parquet file not found: {}", parquet)
@@ -261,10 +260,8 @@ def summary(
         logger.error("No summaries to save")
         raise typer.Exit(code=1)
 
+    summary_df = pl.DataFrame(records)
     try:
-        summary_arrow = pa.Table.from_pylist(records, schema=PAPER_SUMMARY_SCHEMA)
-        summary_df = pl.from_arrow(summary_arrow)
-
         output.parent.mkdir(parents=True, exist_ok=True)
         summary_df.write_parquet(str(output))
         logger.success("Summary results saved to {}", output)
@@ -274,16 +271,18 @@ def summary(
         raise typer.Exit(code=1) from exc
 
     try:
-        manager = PaperManager(uri=app_config.database.uri)
-        summary_table = manager.summary_table
-        upsert(summary_table, summary_arrow, primary_key=ID)
+        summary_store.upsert_many(records)
+        git_store.commit_and_push(
+            "更新论文摘要",
+            paths=[summary_store.root],
+        )
         logger.success(
-            "Upserted {} summaries into table '{}'",
+            "Upserted {} summaries into JSONL store at {}",
             len(records),
-            PAPER_SUMMARY_TABLE,
+            summary_store.root,
         )
     except Exception as exc:
-        logger.error("Failed to upsert summaries into database: {}", exc)
+        logger.error("Failed to update summary JSONL store: {}", exc)
         raise typer.Exit(code=1) from exc
 
     logger.info("=" * 80)
@@ -292,6 +291,7 @@ def summary(
     logger.info("Total papers processed: {}", len(records))
     logger.info("OCR output directory: {}", ocr_output_dir)
     logger.info("Summary parquet file: {}", output)
+    logger.info("Summary store root: {}", summary_store.root)
     logger.info("=" * 80)
 
     logger.info("Sample results (first 3 papers):")
