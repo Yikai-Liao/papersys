@@ -12,3 +12,4 @@ wheels/
 data
 
 .DS_Store
+**/*.parquet
