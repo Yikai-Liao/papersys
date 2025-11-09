@@ -73,9 +73,9 @@ jobs:
           echo "🔍 Running paper recommendation..."
           if [ -n "${{ inputs.limit }}" ]; then
             echo "⚙️  Test mode: limiting to ${{ inputs.limit }} papers"
-            uv run papersys recommend --limit ${{ inputs.limit }}
+            uv run papersys recommend --limit ${{ inputs.limit }} --output data/rec.jsonl
           else
-            uv run papersys recommend
+            uv run papersys recommend --output data/rec.jsonl
           fi
           echo "✅ Recommendation completed"
 
@@ -85,7 +85,7 @@ jobs:
           if [ -n "${{ inputs.limit }}" ]; then
             echo "⚙️  Test mode: summary processes papers from recommend output (already limited)"
           fi
-          uv run papersys summary
+          uv run papersys summary --input data/rec.jsonl
           echo "✅ Summary generation completed"
 
       - name: Run notion sync
