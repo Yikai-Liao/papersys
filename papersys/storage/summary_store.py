@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
-from collections import defaultdict
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping, Set
 
+import polars as pl
 from loguru import logger
 
 from ..fields import (
@@ -14,59 +15,101 @@ from ..fields import (
     SUMMARY_DATE,
     UPDATE_DATE,
 )
+from .summary_schema import SUMMARY_RECORD_SCHEMA
+
+SNAPSHOT_FILENAME = "last.jsonl"
+
+
+@dataclass(slots=True)
+class SummaryWriteReport:
+    batch_size: int
+    partition_paths: list[Path]
+    partition_slugs: list[str]
+    duplicate_ids: list[str]
+    snapshot_path: Path
 
 
 class SummaryStore:
-    """Persist summaries to JSONL files partitioned by publish year."""
+    """Persist summaries to JSONL files partitioned by summary month."""
 
     def __init__(self, root: Path, *, partition_by_publish_year: bool = True) -> None:
+        # partition_by_publish_year is kept only for backward compatibility
         self.root = root
-        self.partition_by_publish_year = partition_by_publish_year
         self.root.mkdir(parents=True, exist_ok=True)
 
-    def upsert_many(self, records: Iterable[Mapping[str, Any]]) -> None:
-        """Upsert multiple summary records into the JSONL store."""
-        grouped: dict[Path, dict[str, dict[str, Any]]] = defaultdict(dict)
+    def upsert_many(self, records: Iterable[Mapping[str, Any]]) -> SummaryWriteReport:
+        """Append summary records into month-partitioned JSONL files."""
+
+        prepared: list[dict[str, Any]] = []
+        partitions: dict[str, list[dict[str, Any]]] = {}
+        duplicate_ids: list[str] = []
+        seen_ids: set[str] = set()
 
         for record in records:
             serialised = self._serialise_record(record)
             record_id = serialised.get(ID)
             if not record_id:
-                logger.warning("跳过缺少 id 的摘要记录：{}", record)
+                logger.warning("Skip summary record without id: {}", record)
                 continue
 
-            target_path = self._target_file(serialised)
-            grouped[target_path][record_id] = serialised
+            if record_id in seen_ids:
+                duplicate_ids.append(record_id)
+            else:
+                seen_ids.add(record_id)
 
-        for path, updates in grouped.items():
-            existing = self._load_existing(path)
-            existing.update(updates)
-            self._write_records(path, existing.values())
-            logger.debug("写入 {} 条摘要到 {}", len(updates), path)
+            slug = self._resolve_month_slug(serialised)
+            partitions.setdefault(slug, []).append(serialised)
+            prepared.append(serialised)
+
+        if not prepared:
+            raise ValueError("No summary records to write")
+
+        touched: list[tuple[str, Path]] = []
+        for slug, batch in partitions.items():
+            path = self._partition_path(slug)
+            self._validate_existing_file(path)
+            self._append_records(path, batch)
+            touched.append((slug, path))
+            logger.debug("Wrote {} summaries into {}", len(batch), path)
+
+        snapshot_path = self.root / SNAPSHOT_FILENAME
+        self._write_last_snapshot(snapshot_path, prepared)
+
+        partition_slugs = [slug for slug, _ in touched]
+        partition_paths = [path for _, path in touched]
+        return SummaryWriteReport(
+            batch_size=len(prepared),
+            partition_paths=partition_paths,
+            partition_slugs=partition_slugs,
+            duplicate_ids=list(dict.fromkeys(duplicate_ids)),
+            snapshot_path=snapshot_path,
+        )
 
     # Internal helpers -----------------------------------------------------
 
-    def _target_file(self, record: Mapping[str, Any]) -> Path:
-        if not self.partition_by_publish_year:
-            return self.root / "summaries.jsonl"
+    def _partition_path(self, slug: str) -> Path:
+        return self.root / f"{slug}.jsonl"
 
-        for key in (PUBLISH_DATE, UPDATE_DATE, SUMMARY_DATE):
-            if key not in record or record[key] is None:
+    def _resolve_month_slug(self, record: Mapping[str, Any]) -> str:
+        for field in (SUMMARY_DATE, PUBLISH_DATE, UPDATE_DATE):
+            if field not in record or record[field] in (None, ""):
                 continue
-            year = self._extract_year(record[key])
-            if year is not None:
-                return self.root / f"{year}.jsonl"
+            slug = self._extract_month_slug(record[field])
+            if slug:
+                return slug
+        return "unknown_month"
 
-        return self.root / "unknown_year.jsonl"
-
-    def _extract_year(self, value: Any) -> int | None:
+    def _extract_month_slug(self, value: Any) -> str | None:
         if isinstance(value, date):
-            return value.year
+            return value.strftime("%Y-%m")
+        if isinstance(value, datetime):
+            return value.strftime("%Y-%m")
         if isinstance(value, str):
             try:
-                return datetime.fromisoformat(value).year
+                parsed = datetime.fromisoformat(value)
             except ValueError:
                 return None
+            return parsed.strftime("%Y-%m")
         return None
 
     def _serialise_record(self, record: Mapping[str, Any]) -> dict[str, Any]:
@@ -82,33 +125,23 @@ class SummaryStore:
             return value.isoformat()
         return value
 
-    def _load_existing(self, path: Path) -> dict[str, dict[str, Any]]:
+    def _validate_existing_file(self, path: Path) -> None:
         if not path.exists():
-            return {}
+            return
 
-        records: dict[str, dict[str, Any]] = {}
         try:
-            with path.open("r", encoding="utf-8") as rf:
-                for line in rf:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        payload = json.loads(line)
-                    except json.JSONDecodeError:
-                        logger.warning("跳过无法解析的 JSON 行：{} -> {}", path, line[:80])
-                        continue
+            pl.scan_ndjson(str(path), schema=SUMMARY_RECORD_SCHEMA).select(pl.first()).collect(streaming=True)
+        except Exception as exc:
+            raise ValueError(f"Existing JSONL file {path} is corrupted; fix before writing") from exc
 
-                    record_id = payload.get(ID)
-                    if record_id is None:
-                        continue
-                    records[record_id] = payload
-        except FileNotFoundError:
-            return {}
+    def _append_records(self, path: Path, records: Iterable[Mapping[str, Any]]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as wf:
+            for record in records:
+                wf.write(json.dumps(record, ensure_ascii=False))
+                wf.write("\n")
 
-        return records
-
-    def _write_records(self, path: Path, records: Iterable[Mapping[str, Any]]) -> None:
+    def _write_last_snapshot(self, path: Path, records: Iterable[Mapping[str, Any]]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as wf:
             for record in records:
@@ -124,17 +157,21 @@ class SummaryStore:
 
         def _iter() -> Iterator[dict[str, Any]]:
             for file_path in sorted(self.root.glob("*.jsonl")):
-                with file_path.open("r", encoding="utf-8") as rf:
-                    for line in rf:
-                        if not line.strip():
-                            continue
-                        try:
-                            yield json.loads(line)
-                        except json.JSONDecodeError:
-                            logger.warning("跳过损坏的摘要记录: {} -> {}", file_path, line[:80])
-                            continue
+                if file_path.name == SNAPSHOT_FILENAME:
+                    continue
+                yield from self._iter_file(file_path)
 
         return _iter()
+
+    def _iter_file(self, file_path: Path) -> Iterator[dict[str, Any]]:
+        try:
+            df = pl.scan_ndjson(str(file_path), schema=SUMMARY_RECORD_SCHEMA).collect(streaming=True)
+        except Exception as exc:
+            logger.warning("Failed to parse summary shard {}: {}", file_path, exc)
+            return
+
+        for row in df.iter_rows(named=True):
+            yield dict(row)
 
     def existing_ids(self) -> Set[str]:
         """Return a set of all IDs already summarised."""

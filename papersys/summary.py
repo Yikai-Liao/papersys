@@ -201,6 +201,7 @@ def summarize_texts(
     api_key: Optional[str] = None,
     use_batch: bool = True,
     poll_interval: int = 30,
+    max_wait_minutes: Optional[float] = None,
 ) -> Dict[str, PaperSummary]:
     """
     对 dict[arxiv_id -> paper_text] 批量调用 Gemini 进行摘要，返回 dict[arxiv_id -> PaperSummary]。
@@ -213,6 +214,7 @@ def summarize_texts(
         api_key: Gemini API key（可选，未提供则从环境变量读取）
         use_batch: 是否使用 Batch API（默认 True）
         poll_interval: 轮询间隔（秒，默认 30）
+        max_wait_minutes: 最长等待时间（分钟，默认 None 表示无限）
         
     Returns:
         dict[arxiv_id, PaperSummary]: 摘要结果
@@ -276,9 +278,13 @@ def summarize_texts(
         
         if state_str in completed_states:
             break
-        
+
         elapsed = time.time() - start
         logger.info(f"Batch job 状态: {state_str}, 已等待 {elapsed/60:.1f} 分钟")
+        if max_wait_minutes is not None and elapsed / 60 > max_wait_minutes:
+            raise TimeoutError(
+                f"Batch job {job_name} exceeded timeout ({max_wait_minutes} min); last state={state_str}"
+            )
         time.sleep(poll_interval)
     
     elapsed_total = time.time() - start
@@ -358,6 +364,7 @@ def summarize_from_path_map(
     api_key: Optional[str] = None,
     use_batch: bool = True,
     poll_interval: int = 30,
+    max_wait_minutes: Optional[float] = None,
 ) -> Dict[str, PaperSummary]:
     """
     从路径映射读取 markdown 文件并进行摘要。
@@ -409,4 +416,5 @@ def summarize_from_path_map(
         api_key=api_key,
         use_batch=use_batch,
         poll_interval=poll_interval,
+        max_wait_minutes=max_wait_minutes,
     )
