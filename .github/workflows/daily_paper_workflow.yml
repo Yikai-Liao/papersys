@@ -1,0 +1,117 @@
+name: Daily Paper Workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Limit number of papers to process (for testing, leave empty for no limit)"
+        type: string
+        required: false
+        default: ""
+  schedule:
+    # 每天 UTC 时间 3:00 运行 (北京时间 11:00)
+    - cron: "0 3 * * *"
+
+concurrency:
+  group: papersys-workflow
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run-papersys:
+    name: Run PaperSys Workflow
+    runs-on: ubuntu-latest
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      PAPERSYS_DATA_TOKEN: ${{ secrets.PAPERSYS_DATA_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate required secrets
+        run: |
+          missing_secrets=()
+          
+          if [ -z "${GEMINI_API_KEY:-}" ]; then
+            missing_secrets+=("GEMINI_API_KEY")
+          fi
+          
+          if [ -z "${NOTION_TOKEN:-}" ]; then
+            missing_secrets+=("NOTION_TOKEN")
+          fi
+          
+          if [ -z "${HF_TOKEN:-}" ]; then
+            missing_secrets+=("HF_TOKEN")
+          fi
+          
+          if [ -z "${PAPERSYS_DATA_TOKEN:-}" ]; then
+            echo "⚠️  Warning: PAPERSYS_DATA_TOKEN is not set. Git operations may fail if using HTTPS."
+          fi
+          
+          if [ ${#missing_secrets[@]} -gt 0 ]; then
+            echo "❌ Missing required secrets: ${missing_secrets[*]}"
+            exit 1
+          fi
+          
+          echo "✅ All required secrets are set"
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Sync project dependencies
+        run: uv sync --locked
+
+      - name: Run recommend
+        run: |
+          echo "🔍 Running paper recommendation..."
+          if [ -n "${{ inputs.limit }}" ]; then
+            echo "⚙️  Test mode: limiting to ${{ inputs.limit }} papers"
+            uv run papersys recommend --limit ${{ inputs.limit }}
+          else
+            uv run papersys recommend
+          fi
+          echo "✅ Recommendation completed"
+
+      - name: Run summary
+        run: |
+          echo "📝 Running paper summary generation..."
+          if [ -n "${{ inputs.limit }}" ]; then
+            echo "⚙️  Test mode: summary processes papers from recommend output (already limited)"
+          fi
+          uv run papersys summary
+          echo "✅ Summary generation completed"
+
+      - name: Run notion sync
+        run: |
+          echo "🔄 Syncing to Notion..."
+          if [ -n "${{ inputs.limit }}" ]; then
+            echo "⚙️  Test mode: notion-sync processes papers from summary output (already limited)"
+          fi
+          uv run papersys notion-sync
+          echo "✅ Notion sync completed"
+
+      - name: Workflow summary
+        run: |
+          echo "## Workflow Execution Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -n "${{ inputs.limit }}" ]; then
+            echo "🧪 **Test Mode**: Limited to ${{ inputs.limit }} papers" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "| Step | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Recommend | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Summary | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Notion Sync | ✅ Completed |" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🕐 Workflow finished at: $(date -u)" >> $GITHUB_STEP_SUMMARY
