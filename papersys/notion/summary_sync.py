@@ -138,32 +138,33 @@ def sync_snapshot_to_notion(
         database = retry_on_502(session.get_db, database_ref)
         retry_on_502(_ensure_schema, database)
         title_attr_name = PAPER_TITLE_FIELD
-        existing = _index_pages_by_record_id(database)
         converter = MarkdownToNotionConverter(session=session)
 
-        for record in tqdm(records, desc="Syncing papers to Notion", unit="paper"):
+        for record in tqdm(records, desc="Creating pages in Notion", unit="paper"):
             record_id = record.get(ID)
             if not record_id:
                 logger.warning("Skipping record without id: {}", record)
                 continue
 
-            page = existing.get(record_id)
             if dry_run:
-                action = "update" if page else "create"
-                logger.info("[dry-run] Would {} Notion page for {}", action, record_id)
+                logger.info("[dry-run] Would create Notion page for {}", record_id)
                 continue
 
-            if page is None:
-                page_kwargs = {title_attr_name: record.get(PAPER_TITLE_FIELD) or record_id}
-                page = retry_on_502(database.create_page, **page_kwargs)
-                existing[record_id] = page
-                report.created += 1
-            else:
-                report.updated += 1
-
+            # Step 1: Prepare blocks offline (convert markdown)
+            blocks = _prepare_page_blocks(record, converter)
+            
+            # Step 2: Create page with all properties and content in one go
+            page_kwargs = {title_attr_name: record.get(PAPER_TITLE_FIELD) or record_id}
+            page = retry_on_502(database.create_page, **page_kwargs)
+            
+            # Step 3: Set properties
             _apply_properties(page, record)
-            _replace_page_content(page, record, converter)
-            retry_on_502(page.reload)
+            
+            # Step 4: Append all blocks in batch (already in Notion, so will upload immediately)
+            if blocks:
+                retry_on_502(page.append, blocks)
+            
+            report.created += 1
 
     finally:
         session.close()
@@ -216,16 +217,6 @@ def _ensure_select_options(prop: notion_schema.Select, options: Iterable[str]) -
     prop.options = prop.options + missing  # type: ignore[operator]
 
 
-def _index_pages_by_record_id(database: Database) -> dict[str, Page]:
-    pages = {}
-    all_pages = retry_on_502(database.get_all_pages)
-    for page in all_pages:
-        if title := page.title:
-            pages[str(title).strip()] = page
-    logger.info("Database already contains {} pages indexed by {}", len(pages), ID)
-    return pages
-
-
 def _apply_properties(page: Page, record: dict[str, object]) -> None:
     record_id = record.get(ID)
     page.title = str(record_id or "")
@@ -269,12 +260,11 @@ def _build_arxiv_url(value: object) -> str | None:
     return f"https://arxiv.org/abs/{value}"
 
 
-def _replace_page_content(
-    page: Page,
+def _prepare_page_blocks(
     record: dict[str, object],
     converter: MarkdownToNotionConverter,
-) -> None:
-    """Replace page content with converted markdown blocks."""
+) -> list[uno.Block]:
+    """Prepare all blocks for a page from markdown content."""
     sections = [
         ("One-sentence Summary", record.get(ONE_SENTENCE_SUMMARY)),
         ("Problem Background", record.get(PROBLEM_BACKGROUND)),
@@ -294,18 +284,11 @@ def _replace_page_content(
         blocks.extend(section_blocks)
         blocks.append(uno.Paragraph(""))
 
-    def _clear_and_append_blocks():
-        existing_children = list(page.children)
-        for child in existing_children:
-            child.delete()
-        
-        if blocks:
-            # Remove trailing spacer if present to avoid empty block at EOF
-            if isinstance(blocks[-1], uno.Paragraph) and not str(blocks[-1]).strip():
-                blocks.pop()
-            page.append(blocks)
+    # Remove trailing spacer if present to avoid empty block at EOF
+    if blocks and isinstance(blocks[-1], uno.Paragraph) and not str(blocks[-1]).strip():
+        blocks.pop()
     
-    retry_on_502(_clear_and_append_blocks)
+    return blocks
 
 
 
