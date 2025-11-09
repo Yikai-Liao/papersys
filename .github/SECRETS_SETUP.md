@@ -61,9 +61,9 @@
 - 在 **limit** 字段输入一个数字（如 `5`）
 - 点击 **Run workflow** 开始执行
 - 将只处理指定数量的论文（用于测试）
-  - `recommend` 命令会限制推荐数量
+  - `recommend` 命令会限制推荐数量为指定值
   - `summary` 命令会处理 recommend 输出的所有论文（已被限制）
-  - `notion-sync` 命令会限制同步数量
+  - `notion-sync` 命令会同步 summary 输出的所有论文（已被限制）
 
 ## 验证配置
 

@@ -43,7 +43,7 @@
 **测试模式行为**：
 - `recommend`：只推荐指定数量的论文
 - `summary`：处理 recommend 输出的所有论文（已被限制）
-- `notion-sync`：只同步指定数量的论文
+- `notion-sync`：同步 summary 输出的所有论文（已被限制）
 
 ## 📊 工作流特性
 
