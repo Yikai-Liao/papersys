@@ -52,7 +52,7 @@ high_threshold = 0.95
 boundary_threshold = 0.5
 
 [summary]
-model = "gemini-2.5-pro"
+model = "gemini-2.5-flash"
 use_batch = true
 poll_interval = 30
 

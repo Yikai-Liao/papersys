@@ -11,17 +11,22 @@
 - **获取方式**: 从 Google AI Studio 获取 Gemini API Key
 - **设置路径**: Repository Settings → Secrets and variables → Actions → New repository secret
 
-### 2. NOTION_TOKEN
+### 2. MISTRAL_API_KEY
+- **用途**: 用于 OCR 处理（summary 命令中的 OCR 步骤）
+- **获取方式**: 从 Mistral AI 平台获取 API Key
+- **设置路径**: Repository Settings → Secrets and variables → Actions → New repository secret
+
+### 3. NOTION_TOKEN
 - **用途**: 用于同步论文摘要到 Notion 数据库（notion-sync 命令）
 - **获取方式**: 从 Notion Integration 设置页面获取 Internal Integration Token
 - **设置路径**: Repository Settings → Secrets and variables → Actions → New repository secret
 
-### 3. HF_TOKEN
+### 4. HF_TOKEN
 - **用途**: 用于访问 Hugging Face 数据集（recommend 命令需要）
 - **获取方式**: 从 Hugging Face Settings → Access Tokens 创建
 - **设置路径**: Repository Settings → Secrets and variables → Actions → New repository secret
 
-### 4. PAPERSYS_DATA_TOKEN (可选)
+### 5. PAPERSYS_DATA_TOKEN (可选)
 - **用途**: 用于推送数据到 Git 仓库（如果 `config.toml` 中 `git_store.repo_url` 使用 HTTPS）
 - **获取方式**: 
   - 如果是 GitHub 仓库，使用 Personal Access Token (需要 repo 权限)

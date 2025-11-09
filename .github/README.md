@@ -11,6 +11,7 @@
 | Secret 名称 | 用途 | 是否必需 |
 |------------|------|---------|
 | `GEMINI_API_KEY` | Gemini API 密钥（用于生成摘要） | ✅ 必需 |
+| `MISTRAL_API_KEY` | Mistral API 密钥（用于 OCR 处理） | ✅ 必需 |
 | `NOTION_TOKEN` | Notion Integration Token（用于同步） | ✅ 必需 |
 | `HF_TOKEN` | Hugging Face Token（用于访问数据集） | ✅ 必需 |
 | `PAPERSYS_DATA_TOKEN` | Git 仓库访问 Token（用于推送数据） | ⚠️ 可选* |
