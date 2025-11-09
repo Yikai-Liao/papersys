@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       limit:
-        description: "Limit number of papers to process (for testing, leave empty for no limit)"
+        description: "limit (max number of papers for recommendation and summary)"
         type: string
         required: false
         default: ""
