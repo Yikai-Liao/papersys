@@ -118,6 +118,12 @@ def main() -> None:
 
     show_summary(preference_path, updated_df, new_df, args.dry_run)
 
+    if not args.dry_run and not args.skip_git_sync:
+        git_store.commit_and_push(
+            message=f"Update preference.csv (+{len(new_df)} Notion rows)",
+            paths=[preference_path],
+        )
+
 
 def fetch_recent_preferences(
     *, database_ref: str, lookback_days: float, limit: int | None
