@@ -1,10 +1,10 @@
 [metadata]
 hf_repo = "lyk/ArxivMetaData"
-parquet = "metadata.parquet"
+shard_prefix = "metadata"
 
 [embedding]
 hf_repo = "lyk/ArxivEmbedding"
-parquet = "embedding.parquet"
+shard_prefix = "embedding"
 model = "gemini-embedding-001"
 dim = 1536
 
@@ -13,11 +13,11 @@ categories = ["cs.CL", "cs.CV", "cs.AI", "cs.LG", "stat.ML", "cs.IR", "cs.CY"]
 
 [git_store]
 # 独立 Git 仓库地址（可使用 HTTPS + token 或 SSH）
-repo_url = "https://github.com/your-org/papersys-data.git"
+repo_url = "https://github.com/Yikai-Liao/papersys-data.git"
 branch = "main"
 # 相对于仓库根目录的路径
 summary_dir = "summaries"
-preference_file = "preferences.jsonl"
+preference_file = "preference.csv"
 
 [recommend]
 # 负样本采样比例

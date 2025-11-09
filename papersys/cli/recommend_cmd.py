@@ -82,15 +82,18 @@ def recommend(
     git_store = GitStore(app_config.git_store)
     git_store.ensure_local_copy()
 
-    metadata_df = load_metadata(app_config.metadata)
-    embedding_df = load_embeddings(app_config.embedding, columns=[ID, EMBEDDING_VECTOR])
+    metadata_df = load_metadata(app_config.metadata, lazy=True)
+    embedding_df = load_embeddings(app_config.embedding, columns=[ID, EMBEDDING_VECTOR], lazy=True)
     preference_df = git_store.load_preferences()
     summary_ids = git_store.summary_store.existing_ids()
 
+    def _frame_info(frame: pl.DataFrame | pl.LazyFrame) -> str:
+        return str(frame.height) if isinstance(frame, pl.DataFrame) else "lazy"
+
     logger.info(
         "数据加载完成：metadata={} rows, embedding={} rows, preferences={} rows, existing summaries={}",
-        metadata_df.height,
-        embedding_df.height,
+        _frame_info(metadata_df),
+        _frame_info(embedding_df),
         preference_df.height,
         len(summary_ids),
     )
@@ -109,9 +112,11 @@ def recommend(
         logger.error("训练失败：{}", exc)
         raise typer.Exit(code=1) from exc
 
+    effective_last_n = last_n_days if last_n_days is not None else app_config.recommend.predict.last_n_days
+
     result = recommender.predict(
         selected_categories,
-        last_n_days=last_n_days,
+        last_n_days=effective_last_n,
         start_date=start_date,
         end_date=end_date,
     ).frame
@@ -132,17 +137,14 @@ def recommend(
 
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)
-        if output.suffix.lower() == ".parquet":
-            recommended.write_parquet(str(output))
-        else:
+        suffix = output.suffix.lower()
+        if suffix in {".jsonl", ".ndjson"}:
+            recommended.write_ndjson(str(output))
+        elif suffix == ".csv":
             recommended.write_csv(str(output))
+        else:
+            raise typer.BadParameter("仅支持输出为 .jsonl/.ndjson 或 .csv 文件。", param_name="output")
         logger.info("推荐结果已写入 {}", output)
-
-    export_dir = git_store.recommendation_dir
-    export_dir.mkdir(parents=True, exist_ok=True)
-    snapshot = export_dir / f"recommendations-{date.today().isoformat()}.parquet"
-    recommended.write_parquet(str(snapshot))
-    git_store.commit_and_push("更新推荐结果", paths=[snapshot])
 
     display_df = recommended.select([ID, TITLE, SCORE]).head(min(20, recommended.height))
     typer.echo(display_df)

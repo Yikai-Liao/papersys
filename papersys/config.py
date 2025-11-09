@@ -47,7 +47,7 @@ class HuggingFaceDatasetConfig(BaseConfig):
     """HuggingFace dataset configuration."""
 
     hf_repo: str
-    parquet: str
+    shard_prefix: str
     revision: str | None = None
 
 
@@ -60,7 +60,6 @@ class EmbeddingConfig(HuggingFaceDatasetConfig):
 
     model: str | None = None
     dim: int
-    parquet: str = "embedding.parquet"
 
 
 class PaperConfig(BaseConfig):

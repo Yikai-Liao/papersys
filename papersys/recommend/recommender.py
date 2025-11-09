@@ -39,24 +39,24 @@ class Recommender:
     def __init__(
         self,
         *,
-        metadata: pl.DataFrame,
-        embeddings: pl.DataFrame,
+        metadata: pl.DataFrame | pl.LazyFrame,
+        embeddings: pl.DataFrame | pl.LazyFrame,
         preferences: pl.DataFrame,
         excluded_ids: Set[str],
         config: RecommendConfig,
     ) -> None:
         self.config = config
-        self._metadata = metadata
-        self._embeddings = embeddings
+        self._metadata = self._to_lazy(metadata)
+        self._embeddings = self._to_lazy(embeddings)
         self._preferences = preferences
         self._preference_ids = set(preferences[ID].to_list()) if ID in preferences.columns else set()
         self._excluded_ids = set(excluded_ids) | self._preference_ids
         self.model = None
 
         logger.info(
-            "Loaded datasets: metadata={}, embeddings={}, preferences={}",
-            metadata.height,
-            embeddings.height,
+            "Loaded datasets (lazy metadata={}, lazy embeddings={}, preferences={})",
+            isinstance(self._metadata, pl.LazyFrame),
+            isinstance(self._embeddings, pl.LazyFrame),
             preferences.height,
         )
 
@@ -198,8 +198,8 @@ class Recommender:
         if end_date is not None:
             meta = meta.filter(pl.col(UPDATE_DATE) <= end_date)
 
-        dataset = meta.join(self._embeddings, on=ID, how="inner")
-        return dataset
+        dataset_lazy = meta.join(self._embeddings, on=ID, how="inner")
+        return dataset_lazy.collect(streaming=True)
 
     def _prepare_preferences(self, dataset: pl.DataFrame) -> pl.DataFrame:
         if self._preferences.is_empty():
@@ -242,6 +242,12 @@ class Recommender:
             start = end - timedelta(days=last_n_days)
             return start, end
         return start_date, end_date
+
+    @staticmethod
+    def _to_lazy(frame: pl.DataFrame | pl.LazyFrame) -> pl.LazyFrame:
+        if isinstance(frame, pl.LazyFrame):
+            return frame
+        return frame.lazy()
 
 
 __all__ = ["Recommender", "RecommendationResult"]

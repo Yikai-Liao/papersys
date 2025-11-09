@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import os
+import shutil
 import subprocess
 from datetime import datetime
 from hashlib import sha1
@@ -13,12 +13,12 @@ from loguru import logger
 
 from ..config import GitStoreConfig
 from ..const import DATA_DIR
-from ..fields import ID
+from ..fields import ID, PREFERENCE
 from .summary_store import SummaryStore
 
 
 class GitStore:
-    """Manage an external Git repository used for JSONL artefacts."""
+    """Manage an external Git repository used for summaries/preferences artefacts."""
 
     TOKEN_ENV = "PAPERSYS_DATA_TOKEN"
 
@@ -27,8 +27,7 @@ class GitStore:
         self.repo_path = self._resolve_repo_path(config.repo_url)
         self.summary_dir = self.repo_path / config.summary_dir
         self.preference_path = self.repo_path / config.preference_file
-        self.summary_store = SummaryStore(self.summary_dir)
-        self.recommendation_dir = self.repo_path / "recommendations"
+        self._summary_store: SummaryStore | None = None
 
     # ------------------------------------------------------------------ #
     # Git operations
@@ -36,6 +35,10 @@ class GitStore:
 
     def ensure_local_copy(self) -> None:
         """Clone the repo if needed, otherwise pull the latest changes."""
+        if self.repo_path.exists() and not (self.repo_path / ".git").exists():
+            logger.warning("数据仓库路径 {} 存在但不是 Git 仓库，正在清理。", self.repo_path)
+            shutil.rmtree(self.repo_path)
+
         if (self.repo_path / ".git").exists():
             logger.debug("Updating existing data repo at {}", self.repo_path)
             self._run_git(["fetch", "--all"])
@@ -74,28 +77,41 @@ class GitStore:
     # ------------------------------------------------------------------ #
 
     def load_preferences(self) -> pl.DataFrame:
-        """Load preference JSONL as a Polars DataFrame."""
+        """Load preference CSV as a Polars DataFrame."""
         if not self.preference_path.exists():
             logger.warning("Preference file {} not found, returning empty DataFrame.", self.preference_path)
             return pl.DataFrame(
                 {
                     ID: pl.Series(name=ID, values=[], dtype=pl.String),
-                    "preference": pl.Series(name="preference", values=[], dtype=pl.String),
+                    PREFERENCE: pl.Series(name=PREFERENCE, values=[], dtype=pl.String),
                 }
             )
-        df = pl.read_ndjson(
+
+        return pl.read_csv(
             self.preference_path,
-            schema={ID: pl.String, "preference": pl.String},
+            schema={ID: pl.String, PREFERENCE: pl.String},
+            infer_schema_length=0,
         )
-        return df
 
     def save_preferences(self, records: Iterable[Mapping[str, str]]) -> None:
-        """Write preference records to JSONL."""
+        """Write preference records to CSV."""
         self.preference_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.preference_path.open("w", encoding="utf-8") as wf:
-            for record in records:
-                wf.write(json.dumps(record, ensure_ascii=False))
-                wf.write("\n")
+        df = pl.DataFrame(records) if records else pl.DataFrame({ID: [], PREFERENCE: []})
+        # Ensure required columns exist even if input mappings miss them
+        if ID not in df.columns:
+            df = df.with_columns(pl.lit(None, dtype=pl.String).alias(ID))
+        if PREFERENCE not in df.columns:
+            df = df.with_columns(pl.lit(None, dtype=pl.String).alias(PREFERENCE))
+        df = df.select([ID, PREFERENCE])
+        df.write_csv(self.preference_path)
+
+    @property
+    def summary_store(self) -> SummaryStore:
+        """Return a lazily initialised SummaryStore."""
+        if self._summary_store is None:
+            self.summary_dir.mkdir(parents=True, exist_ok=True)
+            self._summary_store = SummaryStore(self.summary_dir)
+        return self._summary_store
 
     # ------------------------------------------------------------------ #
     # Internal utilities

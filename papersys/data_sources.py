@@ -4,11 +4,10 @@ from pathlib import Path
 from typing import Iterable
 
 import polars as pl
-from huggingface_hub import hf_hub_download
-from huggingface_hub.utils import HfHubHTTPError
+from huggingface_hub import snapshot_download
 from loguru import logger
 
-from .config import EmbeddingConfig, MetadataConfig
+from .config import EmbeddingConfig, HuggingFaceDatasetConfig, MetadataConfig
 from .fields import ID
 
 CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "hf_cache"
@@ -19,34 +18,69 @@ def _ensure_cache_dir() -> Path:
     return CACHE_DIR
 
 
-def _download_parquet(config_repo: str, filename: str, revision: str | None) -> Path | None:
-    try:
-        path = hf_hub_download(
-            repo_id=config_repo,
-            filename=filename,
-            repo_type="dataset",
-            revision=revision,
-            cache_dir=_ensure_cache_dir(),
+def _repo_cache_dir(config: HuggingFaceDatasetConfig) -> Path:
+    """Return the local cache directory for a HF dataset repo."""
+
+    safe_name = config.hf_repo.replace("/", "__")
+    repo_dir = _ensure_cache_dir() / safe_name
+    repo_dir.mkdir(parents=True, exist_ok=True)
+    return repo_dir
+
+
+def _snapshot_shards(config: HuggingFaceDatasetConfig) -> str:
+    """Download shard files and return a glob pattern for them."""
+
+    repo_dir = _repo_cache_dir(config)
+    filename_pattern = f"{config.shard_prefix}_*.parquet"
+
+    snapshot_download(
+        repo_id=config.hf_repo,
+        repo_type="dataset",
+        revision=config.revision,
+        local_dir=repo_dir,
+        allow_patterns=filename_pattern,
+    )
+
+    shard_files = sorted(repo_dir.glob(filename_pattern))
+    if not shard_files:
+        message = (
+            f"在 HuggingFace 仓库 {config.hf_repo} 中找不到 {filename_pattern} 文件，"
+            "请确认已经按年份上传。"
         )
-    except HfHubHTTPError as exc:
-        if exc.response is not None and exc.response.status_code == 404:
-            logger.warning("文件 {} 在仓库 {} 未找到 (revision={}), 返回空数据。", filename, config_repo, revision)
-            return None
-        raise
-    return Path(path)
+        logger.error(message)
+        raise FileNotFoundError(message)
+
+    years = [int(part) for path in shard_files if (part := path.stem.split("_")[-1]).isdigit()]
+    if years:
+        logger.info(
+            "加载 {} 至 {} 的 {} 个年度分片",
+            min(years),
+            max(years),
+            len(shard_files),
+        )
+
+    return (repo_dir / filename_pattern).as_posix()
 
 
-def load_metadata(config: MetadataConfig, *, lazy: bool = False) -> pl.DataFrame | pl.LazyFrame:
-    """Load metadata parquet from HuggingFace."""
-    parquet_path = _download_parquet(config.hf_repo, config.parquet, config.revision)
-    if parquet_path is None:
-        schema = {ID: pl.String}
-        df = pl.DataFrame(schema=schema)
-        return df.lazy() if lazy else df
-    scan = pl.scan_parquet(parquet_path, low_memory=True)
+def _load_sharded_dataset(
+    config: HuggingFaceDatasetConfig,
+    *,
+    columns: Iterable[str] | None = None,
+    lazy: bool = False,
+) -> pl.DataFrame | pl.LazyFrame:
+    glob_pattern = _snapshot_shards(config)
+    scan = pl.scan_parquet(glob_pattern, low_memory=True)
+    if columns:
+        scan = scan.select(list(columns))
     if lazy:
         return scan
     return scan.collect(streaming=True)
+
+
+def load_metadata(config: MetadataConfig, *, lazy: bool = False) -> pl.DataFrame | pl.LazyFrame:
+    """Load sharded metadata from HuggingFace."""
+
+    return _load_sharded_dataset(config, lazy=lazy)
 
 
 def load_embeddings(
@@ -55,18 +89,9 @@ def load_embeddings(
     lazy: bool = False,
     columns: Iterable[str] | None = None,
 ) -> pl.DataFrame | pl.LazyFrame:
-    """Load embedding parquet from HuggingFace."""
-    parquet_path = _download_parquet(config.hf_repo, config.parquet, config.revision)
-    if parquet_path is None:
-        schema = {ID: pl.String, "embedding": pl.List(pl.Float32)}
-        df = pl.DataFrame(schema=schema)
-        return df.lazy() if lazy else df
-    scan = pl.scan_parquet(parquet_path, low_memory=True)
-    if columns:
-        scan = scan.select(list(columns))
-    if lazy:
-        return scan
-    return scan.collect(streaming=True)
+    """Load sharded embeddings from HuggingFace."""
+
+    return _load_sharded_dataset(config, columns=columns, lazy=lazy)
 
 
 __all__ = ["load_metadata", "load_embeddings"]
