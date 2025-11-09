@@ -3,67 +3,222 @@ import json
 import tempfile
 import time
 import pathlib
+import requests
 from mistralai import Mistral
 from loguru import logger
 from datauri import parse as parse_data_uri
 
-def ocr_by_id(arxiv_id: str):
+# arXiv rate limiting: 3 seconds between requests to avoid 403/captcha
+ARXIV_DOWNLOAD_DELAY = 3.0
+
+def download_arxiv_pdf(arxiv_id: str, output_path: pathlib.Path, retry_delay: float = ARXIV_DOWNLOAD_DELAY, max_retries: int = 3) -> bool:
+    """
+    Download PDF from arXiv with rate limiting to avoid 403/captcha.
+    
+    Args:
+        arxiv_id: arXiv paper ID (e.g., "2201.04234")
+        output_path: Path to save the PDF file
+        retry_delay: Seconds to wait between requests (default: 3.0)
+        max_retries: Maximum number of retry attempts
+    
+    Returns:
+        True if download successful, False otherwise
+    """
+    url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+    headers = {
+        "User-Agent": "PaperSys/0.1 (Educational Research Tool; mailto:research@example.com)"
+    }
+    
+    for attempt in range(1, max_retries + 1):
+        try:
+            # Rate limiting: wait before request
+            if attempt > 1:
+                time.sleep(retry_delay)
+            
+            logger.debug(f"Downloading {arxiv_id} from {url} (attempt {attempt}/{max_retries})")
+            response = requests.get(url, headers=headers, timeout=60, stream=True)
+            
+            if response.status_code == 200:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(output_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                logger.info(f"Downloaded {arxiv_id} successfully")
+                return True
+            elif response.status_code == 403:
+                logger.warning(f"Got 403 for {arxiv_id}, waiting longer before retry...")
+                time.sleep(retry_delay * 2)  # Wait longer on 403
+            else:
+                logger.warning(f"Download failed for {arxiv_id}: HTTP {response.status_code}")
+                
+        except requests.RequestException as exc:
+            logger.warning(f"Download error for {arxiv_id} (attempt {attempt}/{max_retries}): {exc}")
+            
+        # Wait before next retry (except after last attempt)
+        if attempt < max_retries:
+            time.sleep(retry_delay)
+    
+    logger.error(f"Failed to download {arxiv_id} after {max_retries} attempts")
+    return False
+
+def ocr_by_id(arxiv_id: str, pdf_cache_dir: pathlib.Path | None = None, cleanup_pdf: bool = False):
+    """
+    OCR a single arXiv paper by downloading PDF first, then uploading to Mistral.
+    
+    Args:
+        arxiv_id: arXiv paper ID
+        pdf_cache_dir: Directory to cache downloaded PDFs (default: temp dir)
+        cleanup_pdf: Whether to delete the PDF after processing
+    
+    Returns:
+        OCR response object from Mistral API
+    """
     api_key = os.environ["MISTRAL_API_KEY"]
     client = Mistral(api_key=api_key)
     
-    url = f"https://arxiv.org/pdf/{arxiv_id}"
-    response = client.ocr.process(
-        model="mistral-ocr-latest",
-        document={
-            "type": "document_url",
-            "document_url": url
-        },
-        include_image_base64=True
-    )
-    return response
+    # Prepare PDF cache directory
+    if pdf_cache_dir is None:
+        pdf_cache_dir = pathlib.Path(tempfile.gettempdir()) / "papersys_ocr_cache"
+    pdf_path = pdf_cache_dir / f"{arxiv_id}.pdf"
+    
+    # Download PDF from arXiv
+    if not pdf_path.exists():
+        success = download_arxiv_pdf(arxiv_id, pdf_path)
+        if not success:
+            raise RuntimeError(f"Failed to download PDF for {arxiv_id}")
+    else:
+        logger.debug(f"Using cached PDF for {arxiv_id}")
+    
+    try:
+        # Upload to Mistral Cloud
+        with open(pdf_path, 'rb') as f:
+            uploaded_file = client.files.upload(
+                file={
+                    "file_name": f"{arxiv_id}.pdf",
+                    "content": f,
+                },
+                purpose="ocr"
+            )
+        
+        # Get signed URL
+        signed_url = client.files.get_signed_url(file_id=uploaded_file.id)
+        
+        # Process OCR
+        response = client.ocr.process(
+            model="mistral-ocr-latest",
+            document={
+                "type": "document_url",
+                "document_url": signed_url.url,
+            },
+            include_image_base64=True
+        )
+        
+        # Clean up Mistral Cloud file
+        client.files.delete(file_id=uploaded_file.id)
+        
+        return response
+        
+    finally:
+        # Clean up local PDF if requested
+        if cleanup_pdf and pdf_path.exists():
+            pdf_path.unlink()
 
-def ocr_by_id_batch(arxiv_ids: list[str], wait_for_completion: bool = True, poll_interval: int = 10):
+def ocr_by_id_batch(
+    arxiv_ids: list[str], 
+    pdf_cache_dir: pathlib.Path | None = None,
+    cleanup_pdfs: bool = False,
+    wait_for_completion: bool = True, 
+    poll_interval: int = 10
+):
     """
-    Batch OCR processing for multiple arXiv papers to reduce costs.
+    Batch OCR processing for multiple arXiv papers.
+    Downloads PDFs with rate limiting, uploads to Mistral Cloud, then uses batch API.
     
     Args:
         arxiv_ids: List of arXiv IDs to process
+        pdf_cache_dir: Directory to cache downloaded PDFs (default: temp dir)
+        cleanup_pdfs: Whether to delete PDFs after processing
         wait_for_completion: If True, wait for batch job to complete and return results
         poll_interval: Seconds to wait between status checks (default: 10)
     
     Returns:
         If wait_for_completion=True: dict mapping arxiv_id to OCR response
-        If wait_for_completion=False: batch job object for manual tracking
+        If wait_for_completion=False: (batch_job, uploaded_file_ids, pdf_paths) for manual tracking
     """
     api_key = os.environ["MISTRAL_API_KEY"]
     client = Mistral(api_key=api_key)
     
-    # Prepare batch requests
+    # Prepare PDF cache directory
+    if pdf_cache_dir is None:
+        pdf_cache_dir = pathlib.Path(tempfile.gettempdir()) / "papersys_ocr_cache"
+    pdf_cache_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Download PDFs with rate limiting
+    logger.info(f"Downloading {len(arxiv_ids)} PDFs from arXiv...")
+    pdf_paths = {}
+    for i, arxiv_id in enumerate(arxiv_ids):
+        pdf_path = pdf_cache_dir / f"{arxiv_id}.pdf"
+        
+        if not pdf_path.exists():
+            # Rate limiting: wait between downloads (except for first)
+            if i > 0:
+                time.sleep(ARXIV_DOWNLOAD_DELAY)
+            
+            success = download_arxiv_pdf(arxiv_id, pdf_path)
+            if not success:
+                logger.warning(f"Skipping {arxiv_id} due to download failure")
+                continue
+        else:
+            logger.debug(f"Using cached PDF for {arxiv_id}")
+        
+        pdf_paths[arxiv_id] = pdf_path
+    
+    if not pdf_paths:
+        raise RuntimeError("No PDFs downloaded successfully")
+    
+    logger.info(f"Successfully prepared {len(pdf_paths)} PDFs")
+    
+    # Upload PDFs to Mistral Cloud
+    logger.info(f"Uploading {len(pdf_paths)} PDFs to Mistral Cloud...")
+    uploaded_files = {}
+    for arxiv_id, pdf_path in pdf_paths.items():
+        with open(pdf_path, 'rb') as f:
+            uploaded_file = client.files.upload(
+                file={
+                    "file_name": f"{arxiv_id}.pdf",
+                    "content": f,
+                },
+                purpose="ocr"
+            )
+        uploaded_files[arxiv_id] = uploaded_file
+        logger.debug(f"Uploaded {arxiv_id}: {uploaded_file.id}")
+    
+    # Get signed URLs and prepare batch requests
     batch_requests = []
-    for idx, arxiv_id in enumerate(arxiv_ids):
-        url = f"https://arxiv.org/pdf/{arxiv_id}"
+    for arxiv_id, uploaded_file in uploaded_files.items():
+        signed_url = client.files.get_signed_url(file_id=uploaded_file.id)
         request = {
-            "custom_id": arxiv_id,  # Use arxiv_id as custom_id for easy mapping
+            "custom_id": arxiv_id,
             "body": {
                 "model": "mistral-ocr-latest",
                 "document": {
                     "type": "document_url",
-                    "document_url": url
+                    "document_url": signed_url.url,
                 },
                 "include_image_base64": True
             }
         }
         batch_requests.append(request)
     
-    # Create temporary JSONL file
+    # Create batch JSONL file
     with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
         for request in batch_requests:
             f.write(json.dumps(request) + '\n')
-        temp_file_path = f.name
+        batch_jsonl_path = f.name
     
     try:
         # Upload batch file
-        with open(temp_file_path, 'rb') as f:
+        with open(batch_jsonl_path, 'rb') as f:
             batch_data = client.files.upload(
                 file={
                     "file_name": "ocr_batch.jsonl",
@@ -77,21 +232,22 @@ def ocr_by_id_batch(arxiv_ids: list[str], wait_for_completion: bool = True, poll
             input_files=[batch_data.id],
             model="mistral-ocr-latest",
             endpoint="/v1/ocr",
-            metadata={"job_type": "arxiv_ocr", "num_papers": len(arxiv_ids)}
+            metadata={"job_type": "arxiv_ocr", "num_papers": len(batch_requests)}
         )
         
+        logger.success(f"Batch job created: {created_job.id}")
+        
         if not wait_for_completion:
-            return created_job
+            return created_job, [f.id for f in uploaded_files.values()], pdf_paths
         
         # Wait for completion
-        logger.info(f"Batch job created: {created_job.id}")
-        logger.info(f"Processing {len(arxiv_ids)} papers...")
+        logger.info(f"Processing {len(batch_requests)} papers...")
         
         while True:
             retrieved_job = client.batch.jobs.get(job_id=created_job.id)
             status = retrieved_job.status
             
-            logger.debug(f"Status: {status}")
+            logger.debug(f"Batch status: {status}")
             
             if status == "SUCCESS":
                 break
@@ -104,22 +260,36 @@ def ocr_by_id_batch(arxiv_ids: list[str], wait_for_completion: bool = True, poll
         output_file_stream = client.files.download(file_id=retrieved_job.output_file)
         results_content = output_file_stream.read().decode('utf-8')
         
-        # Parse results and map back to arxiv_ids
         results = {}
         for line in results_content.strip().split('\n'):
             if line:
                 result = json.loads(line)
                 arxiv_id = result['custom_id']
-                # Store the response body
                 results[arxiv_id] = result.get('response', {}).get('body', result)
         
         logger.success(f"Batch processing complete! Processed {len(results)} papers.")
+        
+        # Clean up Mistral Cloud files
+        for uploaded_file in uploaded_files.values():
+            try:
+                client.files.delete(file_id=uploaded_file.id)
+            except Exception as e:
+                logger.warning(f"Failed to delete file {uploaded_file.id}: {e}")
+        
+        # Clean up local PDFs if requested
+        if cleanup_pdfs:
+            for pdf_path in pdf_paths.values():
+                try:
+                    pdf_path.unlink()
+                except Exception as e:
+                    logger.warning(f"Failed to delete PDF {pdf_path}: {e}")
+        
         return results
         
     finally:
-        # Clean up temporary file
-        if os.path.exists(temp_file_path):
-            os.unlink(temp_file_path)
+        # Clean up batch JSONL file
+        if os.path.exists(batch_jsonl_path):
+            os.unlink(batch_jsonl_path)
 
 
 def response2md(ocr_response, output_dir: str | pathlib.Path, filename: str):

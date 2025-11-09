@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-from datetime import datetime
+from datetime import datetime, date
 from hashlib import sha1
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
@@ -13,7 +13,7 @@ from loguru import logger
 
 from ..config import GitStoreConfig
 from ..const import DATA_DIR
-from ..fields import ID, PREFERENCE
+from ..fields import ID, PREFERENCE, PREFERENCE_DATE
 from .summary_store import SummaryStore
 
 
@@ -89,20 +89,30 @@ class GitStore:
 
         return pl.read_csv(
             self.preference_path,
-            schema={ID: pl.String, PREFERENCE: pl.String},
+            columns=[ID, PREFERENCE],
+            dtypes={ID: pl.String, PREFERENCE: pl.String},
             infer_schema_length=0,
         )
 
     def save_preferences(self, records: Iterable[Mapping[str, str]]) -> None:
         """Write preference records to CSV."""
         self.preference_path.parent.mkdir(parents=True, exist_ok=True)
-        df = pl.DataFrame(records) if records else pl.DataFrame({ID: [], PREFERENCE: []})
+        df = (
+            pl.DataFrame(records)
+            if records
+            else pl.DataFrame({ID: [], PREFERENCE: [], PREFERENCE_DATE: []})
+        )
+        today = date.today().isoformat()
+
         # Ensure required columns exist even if input mappings miss them
         if ID not in df.columns:
             df = df.with_columns(pl.lit(None, dtype=pl.String).alias(ID))
         if PREFERENCE not in df.columns:
             df = df.with_columns(pl.lit(None, dtype=pl.String).alias(PREFERENCE))
-        df = df.select([ID, PREFERENCE])
+        if PREFERENCE_DATE not in df.columns:
+            df = df.with_columns(pl.lit(today).alias(PREFERENCE_DATE))
+
+        df = df.select([ID, PREFERENCE, PREFERENCE_DATE])
         df.write_csv(self.preference_path)
 
     @property

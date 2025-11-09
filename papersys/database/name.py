@@ -19,6 +19,7 @@ EMBEDDING_VECTOR = "embedding"
 
 PREFERENCE_TABLE = "paper_preference"
 PREFERENCE = "preference"
+PREFERENCE_DATE = "date"
 
 PAPER_SUMMARY_TABLE = "paper_summary"
 

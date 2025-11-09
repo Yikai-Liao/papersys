@@ -20,6 +20,7 @@ dependencies = [
     "typer>=0.20.0",
     "ultimate-notion>=0.9.5",
     "notion-client>=2.5.0",
+    "requests>=2.32.5",
 ]
 
 [project.scripts]
