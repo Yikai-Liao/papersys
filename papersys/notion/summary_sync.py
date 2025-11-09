@@ -18,6 +18,7 @@ from ultimate_notion import schema as notion_schema
 from ultimate_notion.database import Database
 from ultimate_notion.option import Option
 from ultimate_notion.page import Page
+from ultimate_notion.props import Title, Text, Date, Number, MultiSelect, PropertyValue
 
 from ..fields import (
     AUTHORS,
@@ -153,16 +154,11 @@ def sync_snapshot_to_notion(
             # Step 1: Prepare blocks offline (convert markdown)
             blocks = _prepare_page_blocks(record, converter)
             
-            # Step 2: Create page with all properties and content in one go
-            page_kwargs = {title_attr_name: record.get(PAPER_TITLE_FIELD) or record_id}
-            page = retry_on_502(database.create_page, **page_kwargs)
+            # Step 2: Prepare all properties
+            properties = _prepare_properties(record, database)
             
-            # Step 3: Set properties
-            _apply_properties(page, record)
-            
-            # Step 4: Append all blocks in batch (already in Notion, so will upload immediately)
-            if blocks:
-                retry_on_502(page.append, blocks)
+            # Step 3: Create page with title, blocks, and properties in ONE API call
+            page = retry_on_502(_create_page_with_properties, session, database, properties, blocks)
             
             report.created += 1
 
@@ -217,41 +213,92 @@ def _ensure_select_options(prop: notion_schema.Select, options: Iterable[str]) -
     prop.options = prop.options + missing  # type: ignore[operator]
 
 
-def _apply_properties(page: Page, record: dict[str, object]) -> None:
+def _prepare_properties(record: dict[str, object], database: Database) -> dict[str, PropertyValue]:
+    """Prepare all properties for a page in Notion API format."""
     record_id = record.get(ID)
-    page.title = str(record_id or "")
+    display_title = record.get(PAPER_TITLE_FIELD) or record_id or ""
 
-    display_title = record.get(PAPER_TITLE_FIELD) or ""
-
+    # Prepare all property values
+    properties: dict[str, PropertyValue] = {}
+    
+    # Title property - use paper_title as the title field
+    # In Notion database, there's always one "title" property field
+    properties["title"] = Title(display_title)
+    
+    # Text fields
     text_fields = {
         ID: record_id,
-        PAPER_TITLE_FIELD: display_title,
         "authors": record.get(AUTHORS),
-        INSTITUTION: record.get(INSTITUTION),
-        "keywords": record.get(KEYWORDS),
         SUMMARY_MODEL: record.get(SUMMARY_MODEL),
         SLUG: record.get(SLUG),
         "paper_url": _build_arxiv_url(record.get(ID)),
     }
-
-    for prop, value in text_fields.items():
-        _set_property_value(page, prop, value)
-
+    
+    for prop_name, value in text_fields.items():
+        formatted_value = _format_text_property(value)
+        if formatted_value is not None:
+            properties[prop_name] = Text(formatted_value)
+    
+    # MultiSelect fields (institution and keywords)
+    multi_select_fields = {
+        INSTITUTION: record.get(INSTITUTION),
+        "keywords": record.get(KEYWORDS),
+    }
+    
+    for prop_name, value in multi_select_fields.items():
+        multi_select_value = _to_multi_select_values(value)
+        if multi_select_value:
+            properties[prop_name] = MultiSelect(multi_select_value)
+    
+    # Date fields
     date_fields = {
         PUBLISH_DATE: record.get(PUBLISH_DATE),
         UPDATE_DATE: record.get(UPDATE_DATE),
         SUMMARY_DATE: record.get(SUMMARY_DATE),
     }
-
-    for prop, value in date_fields.items():
-        page.props[prop] = value if value else None
-
+    
+    for prop_name, value in date_fields.items():
+        if value:
+            properties[prop_name] = Date(value)
+    
+    # Score (Number field)
     score = record.get(SCORE)
-    if isinstance(score, float) and math.isnan(score):
-        score_value = None
-    else:
-        score_value = score
-    page.props[SCORE] = score_value
+    if score is not None and not (isinstance(score, float) and math.isnan(score)):
+        properties[SCORE] = Number(score)
+    
+    return properties
+
+
+def _create_page_with_properties(
+    session: uno.Session,
+    database: Database,
+    properties: dict[str, PropertyValue],
+    blocks: list[uno.Block] | None,
+) -> Page:
+    """Create a page with properties and blocks using the low-level API.
+    
+    This creates the page with ALL properties and children in a single API call,
+    which is much more efficient than creating the page first and then updating properties.
+    """
+    # Convert PropertyValue objects to obj_ref format for the API
+    properties_obj = {name: prop.obj_ref for name, prop in properties.items()}
+    
+    # Convert Block objects to obj_ref format
+    blocks_obj = [block.obj_ref for block in blocks] if blocks else None
+    
+    # Use the low-level API directly - this sends everything in ONE API call
+    # Note: must pass database.obj_ref, not database itself
+    page_obj = session.api.pages.create(
+        parent=database.obj_ref,
+        properties=properties_obj,
+        children=blocks_obj,
+    )
+    
+    # Wrap and cache the page
+    page = Page.wrap_obj_ref(page_obj)
+    session.cache[page.id] = page
+    
+    return page
 
 
 def _build_arxiv_url(value: object) -> str | None:
