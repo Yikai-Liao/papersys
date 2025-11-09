@@ -163,7 +163,7 @@ prompt = f"""You are now a top research expert, but due to urgently needing fund
     Also, you need to know that, your structured answer will rendered in markdown, so please also use the markdown syntax, especially for latex formula using $...$ or $$...$$.
     Don't write equations like `θ_base`, this is wrong and ugly. Write like $θ_{base}$ instead.
     Do not hide your critical thoughts in the reasoning step. Show them in method and further though parts.
-    拒绝形式主义，不要通过罗列有序无序列表来堆砌大量文字，而是要深入理解论文内容，提炼出最核心、最有价值的信息进行总结。
+    拒绝形式主义，内容一定要精简，不要通过罗列有序无序列表来堆砌大量文字（减少对 bullet point, 1 2 3 等的依赖），而是要深入理解论文内容，提炼出最核心、最有价值的信息进行总结。
     """
 
 example = """
