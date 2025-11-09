@@ -79,6 +79,12 @@ jobs:
       - name: Sync project dependencies
         run: uv sync --locked
 
+      - name: Update preferences from Notion
+        run: |
+          echo "📥 Refreshing preference.csv from Notion..."
+          uv run python scripts/append_recent_preferences.py
+          echo "✅ Preferences updated and pushed"
+
       - name: Run recommend
         run: |
           echo "🔍 Running paper recommendation..."
