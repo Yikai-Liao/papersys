@@ -437,8 +437,19 @@ def _to_multi_select_values(value: object) -> list[str] | None:
     else:
         candidates = [str(value).strip()]
 
-    cleaned = [item for item in candidates if item]
+    cleaned = [_clean_multi_select_token(item) for item in candidates if item]
+    cleaned = [item for item in cleaned if item]
     return cleaned or None
+
+
+def _clean_multi_select_token(token: str) -> str:
+    """Notion multi-select options can't contain commas, replace them."""
+    if "," not in token:
+        return token
+    parts = [part.strip() for part in token.split(",") if part.strip()]
+    if not parts:
+        return ""
+    return " - ".join(parts)
 
 
 __all__ = ["sync_snapshot_to_notion", "NotionSyncReport"]
