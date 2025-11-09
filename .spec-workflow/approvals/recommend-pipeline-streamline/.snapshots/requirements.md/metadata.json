@@ -1,0 +1,14 @@
+{
+  "filePath": ".spec-workflow/specs/recommend-pipeline-streamline/requirements.md",
+  "currentVersion": 1,
+  "snapshots": [
+    {
+      "version": 1,
+      "filename": "snapshot-001.json",
+      "timestamp": "2025-11-09T08:23:44.498Z",
+      "trigger": "initial",
+      "approvalId": "approval_1762676624490_9caz945n3",
+      "approvalTitle": "recommend-pipeline-streamline requirements"
+    }
+  ]
+}
