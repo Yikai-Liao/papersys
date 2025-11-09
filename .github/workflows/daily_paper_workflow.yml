@@ -25,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
       NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       PAPERSYS_DATA_TOKEN: ${{ secrets.PAPERSYS_DATA_TOKEN }}
@@ -38,6 +39,10 @@ jobs:
           
           if [ -z "${GEMINI_API_KEY:-}" ]; then
             missing_secrets+=("GEMINI_API_KEY")
+          fi
+          
+          if [ -z "${MISTRAL_API_KEY:-}" ]; then
+            missing_secrets+=("MISTRAL_API_KEY")
           fi
           
           if [ -z "${NOTION_TOKEN:-}" ]; then
