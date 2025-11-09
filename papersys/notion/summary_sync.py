@@ -269,6 +269,33 @@ def _prepare_properties(record: dict[str, object], database: Database) -> dict[s
     return properties
 
 
+def _append_nested_children(
+    session: uno.Session,
+    parent_block_id: str,
+    children: list,  # List of Block objects (from md2notion converter)
+) -> None:
+    """Recursively append children to a parent block.
+    
+    Args:
+        session: The Notion session
+        parent_block_id: The ID of the parent block
+        children: List of child blocks to append (Block objects with obj_ref attribute)
+    """
+    # Convert children to obj_ref format for the API
+    children_obj_refs = [child.obj_ref for child in children]
+    
+    # Append all children to the parent block
+    appended_blocks, _ = session.api.blocks.children.append(parent_block_id, children_obj_refs)
+    
+    # For each appended block, if it has nested children, recursively append them
+    for i, child in enumerate(children):
+        if hasattr(child, '_children') and child._children:
+            # Get the block_id of the appended child
+            appended_block = appended_blocks[i]
+            if hasattr(appended_block, 'id') and appended_block.id:
+                _append_nested_children(session, str(appended_block.id), child._children)
+
+
 def _create_page_with_properties(
     session: uno.Session,
     database: Database,
@@ -277,26 +304,62 @@ def _create_page_with_properties(
 ) -> Page:
     """Create a page with properties and blocks using the low-level API.
     
-    This creates the page with ALL properties and children in a single API call,
-    which is much more efficient than creating the page first and then updating properties.
+    This creates the page with properties and top-level blocks in a single API call.
+    Nested children are appended separately due to Notion API limitations.
     """
-    # Convert PropertyValue objects to obj_ref format for the API
-    properties_obj = {name: prop.obj_ref for name, prop in properties.items()}
+    from ultimate_notion.obj_api.objects import DatabaseRef
+    from ultimate_notion.obj_api.blocks import Database as ObjAPIDatabase
     
-    # Convert Block objects to obj_ref format
-    blocks_obj = [block.obj_ref for block in blocks] if blocks else None
+    # Build the request manually
+    # Convert high-level Database to obj_api Database if needed
+    if hasattr(database, 'obj_ref'):
+        db_obj = database.obj_ref
+    else:
+        db_obj = database
     
-    # Use the low-level API directly - this sends everything in ONE API call
-    # Note: must pass database.obj_ref, not database itself
-    page_obj = session.api.pages.create(
-        parent=database.obj_ref,
-        properties=properties_obj,
-        children=blocks_obj,
-    )
+    # Build DatabaseRef from the obj_api Database
+    if isinstance(db_obj, ObjAPIDatabase):
+        parent_ref = DatabaseRef.build(db_obj)
+    else:
+        msg = f'Unsupported database type: {type(database)}'
+        raise TypeError(msg)
     
-    # Wrap and cache the page
+    request = {
+        'parent': parent_ref.serialize_for_api(),
+        'properties': {name: prop.obj_ref.serialize_for_api() for name, prop in properties.items()},
+    }
+    
+    # Serialize blocks WITHOUT nested children (Notion API doesn't support nested children in create)
+    blocks_with_children = []
+    if blocks:
+        request['children'] = []
+        for block in blocks:
+            serialized = block.obj_ref.serialize_for_api()
+            request['children'].append(serialized)
+            
+            # Track blocks that have children for later processing
+            if hasattr(block, '_children') and block._children:
+                blocks_with_children.append(block)
+    
+    # Create the page with top-level blocks
+    data = session.api.pages.raw_api.create(**request)
+    
+    # Wrap the response in a Page object
+    # Note: The raw API returns a dict, we need to convert it to obj_api Page first
+    from ultimate_notion.obj_api.blocks import Page as ObjAPIPage
+    page_obj = ObjAPIPage.model_validate(data)
     page = Page.wrap_obj_ref(page_obj)
     session.cache[page.id] = page
+    
+    # Now append nested children to blocks that have them
+    if blocks_with_children:
+        # Retrieve the page's children to get their block IDs
+        created_blocks = list(session.api.blocks.children.list(str(page.id)))
+        
+        # Match created blocks with our original blocks (in order)
+        for i, block in enumerate(blocks):
+            if hasattr(block, '_children') and block._children and i < len(created_blocks):
+                _append_nested_children(session, str(created_blocks[i].id), block._children)
     
     return page
 
