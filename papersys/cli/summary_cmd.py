@@ -106,6 +106,14 @@ def summary(
 
     logger.info("Loading config from {}", config)
     app_config = load_config(AppConfig, config)
+    
+    # Use config values if command-line arguments are defaults
+    if model == "gemini-2.5-flash":  # Check if it's the default
+        model = app_config.summary.model
+    if use_batch is True and poll_interval == 30:  # Both are defaults
+        use_batch = app_config.summary.use_batch
+        poll_interval = app_config.summary.poll_interval
+    
     git_store = GitStore(app_config.git_store)
     git_store.ensure_local_copy()
     summary_store = git_store.summary_store

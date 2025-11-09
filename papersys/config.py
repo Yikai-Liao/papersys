@@ -122,6 +122,14 @@ class GitStoreConfig(BaseConfig):
     preference_file: Path
 
 
+class SummaryConfig(BaseConfig):
+    """Summary generation configuration."""
+
+    model: str = "gemini-2.5-flash"
+    use_batch: bool = True
+    poll_interval: int = 30
+
+
 class NotionConfig(BaseConfig):
     """Notion sync configuration."""
 
@@ -135,6 +143,7 @@ class AppConfig(BaseConfig):
     embedding: EmbeddingConfig
     paper: PaperConfig
     recommend: RecommendConfig
+    summary: SummaryConfig
     git_store: GitStoreConfig
     notion: NotionConfig
 
@@ -145,6 +154,8 @@ __all__ += [
     "EmbeddingConfig",
     "PaperConfig",
     "RecommendConfig",
+    "SummaryConfig",
     "GitStoreConfig",
+    "NotionConfig",
     "AppConfig",
 ]
