@@ -46,8 +46,8 @@ k_smote = 16
 
 # 预测配置
 [recommend.predict]
-last_n_days = 7
-sample_rate = 0.15
+last_n_days = 60
+sample_rate = 0.04
 high_threshold = 0.95
 boundary_threshold = 0.5
 
