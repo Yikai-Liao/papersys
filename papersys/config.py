@@ -100,6 +100,7 @@ class PredictConfig(BaseConfig):
     sample_rate: float = 0.15
     high_threshold: float = 0.95
     boundary_threshold: float = 0.5
+    limit: int | None = None
 
 
 class RecommendConfig(BaseConfig):

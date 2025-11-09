@@ -113,6 +113,7 @@ def recommend(
         raise typer.Exit(code=1) from exc
 
     effective_last_n = last_n_days if last_n_days is not None else app_config.recommend.predict.last_n_days
+    effective_limit = limit if limit is not None else app_config.recommend.predict.limit
 
     result = recommender.predict(
         selected_categories,
@@ -136,8 +137,8 @@ def recommend(
 
     recommended = recommended.drop(drop_columns).with_columns(pl.col(SCORE).round(6))
 
-    if limit is not None:
-        recommended = recommended.head(limit)
+    if effective_limit is not None:
+        recommended = recommended.head(effective_limit)
 
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)
