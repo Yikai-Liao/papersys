@@ -1,0 +1,30 @@
+{
+  "filePath": ".spec-workflow/specs/summary-pipeline-fix/design.md",
+  "currentVersion": 3,
+  "snapshots": [
+    {
+      "version": 1,
+      "filename": "snapshot-001.json",
+      "timestamp": "2025-11-09T08:54:01.726Z",
+      "trigger": "initial",
+      "approvalId": "approval_1762678441720_ipgu9moec",
+      "approvalTitle": "summary-pipeline-fix design.md"
+    },
+    {
+      "version": 2,
+      "filename": "snapshot-002.json",
+      "timestamp": "2025-11-09T09:02:38.311Z",
+      "trigger": "revision_requested",
+      "approvalId": "approval_1762678441720_ipgu9moec",
+      "approvalTitle": "summary-pipeline-fix design.md"
+    },
+    {
+      "version": 3,
+      "filename": "snapshot-003.json",
+      "timestamp": "2025-11-09T09:06:10.299Z",
+      "trigger": "approved",
+      "approvalId": "approval_1762679021745_kvr5zk76m",
+      "approvalTitle": "summary-pipeline-fix design.md (rev)"
+    }
+  ]
+}

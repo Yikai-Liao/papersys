@@ -1,0 +1,22 @@
+{
+  "filePath": ".spec-workflow/specs/summary-pipeline-fix/requirements.md",
+  "currentVersion": 2,
+  "snapshots": [
+    {
+      "version": 1,
+      "filename": "snapshot-001.json",
+      "timestamp": "2025-11-09T08:39:17.703Z",
+      "trigger": "initial",
+      "approvalId": "approval_1762677557696_asj78gxjv",
+      "approvalTitle": "summary-pipeline-fix requirements"
+    },
+    {
+      "version": 2,
+      "filename": "snapshot-002.json",
+      "timestamp": "2025-11-09T08:45:17.876Z",
+      "trigger": "revision_requested",
+      "approvalId": "approval_1762677557696_asj78gxjv",
+      "approvalTitle": "summary-pipeline-fix requirements"
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+Project: papersys. Date: 2025-11-09.
+Updated SummaryStore to write monthly shards + last.jsonl snapshots using polars scan validation. Summary CLI now requires --input, adds --dry-run, writes batch snapshot JSONL, logs touched months, and keeps parquet export optional.

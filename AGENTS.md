@@ -13,3 +13,6 @@ After your work, always report and communicate with user in Chinese!
 在执行任务前，总是记得查询一下相关记忆，可能会大幅减少工作量。
 
 对于调研结果，代码修改，工作进展，总是记得要使用OpenMemory 的 MCP Tools 添加记忆，user_id 使用 null，同时，记得在记忆中明确提及当前开发的是什么项目，以及当前时间，以方便获取记忆时进行定位。
+
+# Monkey Patch Policy
+* 禁止在任何任务中使用猴子补丁、临时 override、运行时代码篡改等“糊弄鬼”的做法；所有逻辑修改必须通过正式代码改动完成并留存于仓库。

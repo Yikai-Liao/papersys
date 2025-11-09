@@ -122,6 +122,12 @@ class GitStoreConfig(BaseConfig):
     preference_file: Path
 
 
+class NotionConfig(BaseConfig):
+    """Notion sync configuration."""
+
+    database: str
+
+
 class AppConfig(BaseConfig):
     """Application configuration."""
 
@@ -130,6 +136,7 @@ class AppConfig(BaseConfig):
     paper: PaperConfig
     recommend: RecommendConfig
     git_store: GitStoreConfig
+    notion: NotionConfig
 
 
 __all__ += [

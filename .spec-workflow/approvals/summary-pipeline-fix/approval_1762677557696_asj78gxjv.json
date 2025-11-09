@@ -1,0 +1,27 @@
+{
+  "id": "approval_1762677557696_asj78gxjv",
+  "title": "summary-pipeline-fix requirements",
+  "filePath": ".spec-workflow/specs/summary-pipeline-fix/requirements.md",
+  "type": "document",
+  "status": "needs-revision",
+  "createdAt": "2025-11-09T08:39:17.696Z",
+  "category": "spec",
+  "categoryName": "summary-pipeline-fix",
+  "response": "Feedback Summary (1 comments):\n\nSpecific Text Comments:\n1. \"### Performance\n- 单次 upsert 应只读写受影响的月份文件与 `last.js...\": 我不是很理解这里是什么意思，哪里要避免全量扫描？summary 的结果不需要做 unique，按照运行摘要的时间戳往后排序就完了（可能需要注意统一时区，否则可能有问题），即使有重复论文摘要也优先保存两个版本。last.jsonl 就是指最新一次批量摘要的结果，每次运行 pipeline 都覆盖。\n",
+  "annotations": "{\n  \"decision\": \"needs-revision\",\n  \"comments\": [\n    {\n      \"type\": \"selection\",\n      \"comment\": \"我不是很理解这里是什么意思，哪里要避免全量扫描？summary 的结果不需要做 unique，按照运行摘要的时间戳往后排序就完了（可能需要注意统一时区，否则可能有问题），即使有重复论文摘要也优先保存两个版本。last.jsonl 就是指最新一次批量摘要的结果，每次运行 pipeline 都覆盖。\",\n      \"timestamp\": \"2025-11-09T08:43:29.213Z\",\n      \"selectedText\": \"### Performance\\n- 单次 upsert 应只读写受影响的月份文件与 `last.jsonl`，避免全量扫描。\",\n      \"highlightColor\": {\n        \"bg\": \"rgba(255, 235, 59, 0.3)\",\n        \"border\": \"#FFEB3B\",\n        \"name\": \"#ffeb3b\"\n      },\n      \"id\": \"comment_1762677809213_mflipq5rm\"\n    }\n  ],\n  \"summary\": \"Feedback Summary (1 comments):\\n\\nSpecific Text Comments:\\n1. \\\"### Performance\\n- 单次 upsert 应只读写受影响的月份文件与 `last.js...\\\": 我不是很理解这里是什么意思，哪里要避免全量扫描？summary 的结果不需要做 unique，按照运行摘要的时间戳往后排序就完了（可能需要注意统一时区，否则可能有问题），即使有重复论文摘要也优先保存两个版本。last.jsonl 就是指最新一次批量摘要的结果，每次运行 pipeline 都覆盖。\\n\",\n  \"timestamp\": \"2025-11-09T08:45:17.867Z\"\n}",
+  "respondedAt": "2025-11-09T08:45:17.877Z",
+  "comments": [
+    {
+      "type": "selection",
+      "comment": "我不是很理解这里是什么意思，哪里要避免全量扫描？summary 的结果不需要做 unique，按照运行摘要的时间戳往后排序就完了（可能需要注意统一时区，否则可能有问题），即使有重复论文摘要也优先保存两个版本。last.jsonl 就是指最新一次批量摘要的结果，每次运行 pipeline 都覆盖。",
+      "timestamp": "2025-11-09T08:43:29.213Z",
+      "selectedText": "### Performance\n- 单次 upsert 应只读写受影响的月份文件与 `last.jsonl`，避免全量扫描。",
+      "highlightColor": {
+        "bg": "rgba(255, 235, 59, 0.3)",
+        "border": "#FFEB3B",
+        "name": "#ffeb3b"
+      },
+      "id": "comment_1762677809213_mflipq5rm"
+    }
+  ]
+}

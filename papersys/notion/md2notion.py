@@ -10,7 +10,7 @@ from typing import Iterable, Sequence
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 from mdit_py_plugins.footnote import footnote_plugin
-from mdit_py_plugins.texmath import texmath_plugin
+from mdit_py_plugins.dollarmath import dollarmath_plugin
 
 import ultimate_notion as uno
 from ultimate_notion.rich_text import Text, math as make_math, text as make_text
@@ -84,6 +84,9 @@ class InlineRenderResult:
         self.attachments.extend(other.attachments)
 
 
+DISPLAY_MATH_PATTERN = re.compile(r"\$\$(.+?)\$\$", re.DOTALL)
+
+
 class MarkdownToNotionConverter:
     """Convert Markdown strings to Ultimate Notion block objects."""
 
@@ -103,7 +106,13 @@ class MarkdownToNotionConverter:
     @staticmethod
     def _build_markdown() -> MarkdownIt:
         md = MarkdownIt("commonmark", {"html": True, "linkify": True})
-        md.use(texmath_plugin, delimiters="dollars")
+        md.use(
+            dollarmath_plugin,
+            allow_labels=True,
+            allow_blank_lines=True,
+            double_inline=True,
+            allow_space=True,
+        )
         md.use(footnote_plugin)
         md.enable("strikethrough")
         md.enable("table")
@@ -114,14 +123,40 @@ class MarkdownToNotionConverter:
 
         if asset_root is not None:
             self._asset_root = asset_root
-        tokens = self._md.parse(markdown)
+        tokens = self._md.parse(self._prepare_display_math(markdown))
         blocks, _ = self._consume_blocks(tokens, 0)
         return blocks
+
+    def _prepare_display_math(self, markdown: str) -> str:
+        if "$$" not in markdown:
+            return markdown
+
+        chunks: list[str] = []
+        idx = 0
+        while True:
+            start = markdown.find("$$", idx)
+            if start == -1:
+                chunks.append(markdown[idx:])
+                break
+            end = markdown.find("$$", start + 2)
+            if end == -1:
+                chunks.append(markdown[idx:])
+                break
+            end += 2
+            chunks.append(markdown[idx:start])
+            body = markdown[start + 2 : end - 2].strip()
+            chunks.append(f"\n$$\n{body}\n$$\n")
+            idx = end
+
+        processed = "".join(chunks)
+        processed = re.sub(r"\$\$\n[ \t]+", "$$\n", processed)
+        processed = re.sub(r"\$\$\n\n[ \t]+", "$$\n\n", processed)
+        return processed
 
     def collect_local_asset_paths(self, markdown: str, *, asset_root: Path) -> set[Path]:
         """Collect local asset paths referenced within the markdown."""
 
-        tokens = self._md.parse(markdown)
+        tokens = self._md.parse(self._prepare_display_math(markdown))
         sources = self._extract_local_asset_sources(tokens)
         candidates = {(asset_root / source).resolve() for source in sources}
         return {path for path in candidates if path.exists()}

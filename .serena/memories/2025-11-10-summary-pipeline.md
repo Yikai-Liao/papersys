@@ -1,0 +1,7 @@
+Project: papersys. Date: 2025-11-10.
+State snapshot:
+- Summary pipeline: SummaryStore writes monthly shards + `summaries/last.jsonl` via polars schema. Summary CLI requires `--input` (recommend output) and supports `--dry-run`; all CLI runs via `UV_CACHE_DIR="$PWD/.uv-cache" uv run ...`. Recommend stage already strips embeddings; latest sample at `data/rec.jsonl`.
+- Notion sync: New module `papersys/notion/summary_sync.py` reads last snapshot with `SUMMARY_RECORD_SCHEMA`, renames title->paper_title, checks schema in target Notion DB (fields: paper_title, paper_id, authors, institutions, keywords, publish/update/summary dates, summary_model, score, slug, paper_url, preference select {like, dislike, neutral}, last_edit_time). Missing columns get created automatically. Markdown sections (one_sentence_summary etc.) converted via MarkdownToNotionConverter with blank paragraph spacing; entire page body rebuilt each sync. After update, page.props[`last_edit_time`] is set to `page.last_edited_time.isoformat()`.
+- CLI: `papersys notion-sync --database <url> [--snapshot path --limit N --dry-run]` ensures GitStore clone first (reads config.toml). README documents usage. NEVER run summary or notion sync without explicit user go-ahead (API costs!).
+- Constraints: strictly no monkey patches, logs in English, use `uv run` for Python. Data repo at `data/git_store/ed028a04c6`. Existing spec/design under `.spec-workflow/specs/summary-pipeline-fix/` for deeper context.
+Use this memory to resume work without re-reading files.

@@ -130,7 +130,11 @@ def recommend(
         logger.warning("模型未选择任何推荐论文。")
         return
 
-    recommended = recommended.drop("show").with_columns(pl.col(SCORE).round(6))
+    drop_columns: list[str] = ["show"]
+    if EMBEDDING_VECTOR in recommended.columns:
+        drop_columns.append(EMBEDDING_VECTOR)
+
+    recommended = recommended.drop(drop_columns).with_columns(pl.col(SCORE).round(6))
 
     if limit is not None:
         recommended = recommended.head(limit)
