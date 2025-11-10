@@ -193,6 +193,7 @@ def summary(
                 arxiv_ids=papers_to_ocr,
                 wait_for_completion=True,
                 poll_interval=10,
+                ar5iv=app_config.ocr.ar5iv,
             )
             logger.success("OCR batch processing completed for {} papers", len(ocr_results))
         except Exception as exc:

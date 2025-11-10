@@ -14,6 +14,7 @@ dependencies = [
     "mistralai>=1.9.11",
     "markdown-it-py[linkify,plugins]>=3.0.0",
     "mdit-py-plugins>=0.4.0",
+    "pypandoc>=1.14",
     "polars>=1.34.0",
     "python-dotenv>=1.1.1",
     "tqdm>=4.67.1",
