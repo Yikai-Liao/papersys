@@ -157,7 +157,7 @@ def _maybe_fetch_ar5iv_response(arxiv_id: str) -> dict[str, object] | None:
         return None
 
     markdown = _strip_reference_section(markdown)
-    logger.info("Using ar5iv markdown for {}", arxiv_id)
+    logger.debug("Using ar5iv markdown for {}", arxiv_id)
     return _markdown_to_ocr_response(arxiv_id, markdown, source_url)
 
 def download_arxiv_pdf(arxiv_id: str, output_path: pathlib.Path, retry_delay: float = ARXIV_DOWNLOAD_DELAY, max_retries: int = 3) -> bool:
@@ -324,6 +324,11 @@ def ocr_by_id_batch(
                 pending_ids.append(arxiv_id)
 
     if not pending_ids:
+        logger.info(
+            "ar5iv hits: %d/%d (skipped OCR batch)",
+            len(ar5iv_results),
+            len(arxiv_ids),
+        )
         return ar5iv_results
 
     api_key = os.environ["MISTRAL_API_KEY"]
@@ -465,6 +470,12 @@ def ocr_by_id_batch(
                 except Exception as e:
                     logger.warning(f"Failed to delete PDF {pdf_path}: {e}")
         
+        logger.info(
+            "ar5iv hits: %d/%d (remaining %d processed via OCR)",
+            len(ar5iv_results),
+            len(arxiv_ids),
+            len(results),
+        )
         combined_results = {**ar5iv_results, **results}
         return combined_results
         
@@ -576,7 +587,11 @@ def response2md(ocr_response, output_dir: str | pathlib.Path, filename: str):
     num_pages = len(md_parts)
     num_images = len(replacements)
     
-    logger.info(f"Markdown saved to: {md_path}")
-    logger.info(f"Total pages: {num_pages} | Total images: {num_images}")
+    logger.info(
+        "Markdown saved to %s (pages=%d, images=%d)",
+        md_path,
+        num_pages,
+        num_images,
+    )
 
     
