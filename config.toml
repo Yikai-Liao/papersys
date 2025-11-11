@@ -57,5 +57,8 @@ model = "gemini-2.5-pro"
 use_batch = true
 poll_interval = 30
 
+[ocr]
+ar5iv = true
+
 [notion]
 database = "https://www.notion.so/29981ffdcde3804d8378c726c9eef5f1"

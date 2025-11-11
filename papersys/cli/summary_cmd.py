@@ -165,9 +165,7 @@ def summary(
 
     ocr_output_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info("=" * 80)
     logger.info("Step 1: Batch OCR processing")
-    logger.info("=" * 80)
 
     papers_to_ocr = []
     papers_skipped = []
@@ -193,6 +191,7 @@ def summary(
                 arxiv_ids=papers_to_ocr,
                 wait_for_completion=True,
                 poll_interval=10,
+                ar5iv=app_config.ocr.ar5iv,
             )
             logger.success("OCR batch processing completed for {} papers", len(ocr_results))
         except Exception as exc:
@@ -215,9 +214,7 @@ def summary(
     else:
         logger.info("All papers already have OCR results, skipping OCR API calls")
 
-    logger.info("=" * 80)
-    logger.info("Step 2: Batch AI summarization")
-    logger.info("=" * 80)
+        logger.info("Step 2: Batch AI summarization")
 
     path_map = {pid: ocr_output_dir / pid for pid in paper_ids_list}
 
@@ -235,9 +232,7 @@ def summary(
         logger.error("Summarization failed: {}", exc)
         raise typer.Exit(code=1) from exc
 
-    logger.info("=" * 80)
     logger.info("Step 3: Saving results")
-    logger.info("=" * 80)
 
     today_iso = date.today().isoformat()
 

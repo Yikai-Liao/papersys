@@ -1,15 +1,164 @@
-import os
 import json
+import os
+import pathlib
+import re
 import tempfile
 import time
-import pathlib
+import urllib.parse
+
+import pypandoc
 import requests
-from mistralai import Mistral
-from loguru import logger
 from datauri import parse as parse_data_uri
+from loguru import logger
+from mistralai import Mistral
+from pypandoc.pandoc_download import download_pandoc
 
 # arXiv rate limiting: 3 seconds between requests to avoid 403/captcha
 ARXIV_DOWNLOAD_DELAY = 3.0
+
+SCRIPT_ROOT = pathlib.Path(__file__).resolve().parents[1]
+LUA_FILTER_PATH = SCRIPT_ROOT / "scripts" / "strip-wrapper.lua"
+AR5IV_USER_AGENT = "PaperSys-ar5iv-prober/0.1 (+paperops@example.com)"
+AR5IV_MARKDOWN_FORMAT = "commonmark_x+tex_math_dollars"
+AR5IV_MAX_RETRIES = 3
+AR5IV_RETRY_DELAY = 2.0
+REFERENCE_HEADING_RE = re.compile(
+    r"(?im)^\s*#{1,6}\s+.*?(references?|bibliography)\b.*$"
+)
+
+
+def _fetch_ar5iv_html(
+    arxiv_id: str,
+    max_retries: int = AR5IV_MAX_RETRIES,
+    retry_delay: float = AR5IV_RETRY_DELAY,
+) -> tuple[str, str] | tuple[None, None]:
+    """Fetch rendered HTML for an arXiv paper via ar5iv."""
+
+    url = f"https://ar5iv.org/html/{arxiv_id}"
+    headers = {"User-Agent": AR5IV_USER_AGENT}
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = requests.get(
+                url,
+                headers=headers,
+                timeout=30,
+                allow_redirects=True,
+            )
+        except requests.RequestException as exc:
+            logger.warning(
+                "ar5iv fetch error for {} (attempt {}/{}): {}",
+                arxiv_id,
+                attempt,
+                max_retries,
+                exc,
+            )
+        else:
+            final_host = urllib.parse.urlparse(response.url).hostname or ""
+
+            if response.status_code == 200 and "ar5iv" in final_host:
+                return response.text, response.url
+
+            if "arxiv" in final_host:
+                logger.info(
+                    "{} missing on ar5iv (redirected to {})",
+                    arxiv_id,
+                    response.url,
+                )
+                return None, None
+
+            logger.debug(
+                "Unexpected ar5iv response for {}: status={} host={}",
+                arxiv_id,
+                response.status_code,
+                final_host,
+            )
+
+        if attempt < max_retries:
+            sleep_for = retry_delay * attempt
+            logger.debug(
+                "Retrying ar5iv fetch for {} in {:.1f}s",
+                arxiv_id,
+                sleep_for,
+            )
+            time.sleep(sleep_for)
+
+    return None, None
+
+
+def _html_to_markdown(html: str) -> str:
+    """Convert HTML to Markdown using the shared Lua filter."""
+
+    extra_args = ["--wrap=none", "--markdown-headings=atx"]
+    if LUA_FILTER_PATH.exists():
+        extra_args.extend(["--lua-filter", str(LUA_FILTER_PATH)])
+    else:
+        logger.warning("Lua filter not found at {}, proceeding without it", LUA_FILTER_PATH)
+    try:
+        return pypandoc.convert_text(
+            html,
+            to=AR5IV_MARKDOWN_FORMAT,
+            format="html",
+            extra_args=extra_args,
+        )
+    except OSError as exc:
+        message = str(exc)
+        if "No pandoc was found" not in message:
+            raise
+        logger.info("Pandoc binary missing; downloading via pypandoc...")
+        download_pandoc()
+        return pypandoc.convert_text(
+            html,
+            to=AR5IV_MARKDOWN_FORMAT,
+            format="html",
+            extra_args=extra_args,
+        )
+
+
+def _strip_reference_section(markdown: str) -> str:
+    """Remove the References/Bibliography section to avoid redundant OCR."""
+
+    match = REFERENCE_HEADING_RE.search(markdown)
+    if not match:
+        return markdown
+    cutoff = match.start()
+    return markdown[:cutoff].rstrip() + "\n"
+
+
+def _markdown_to_ocr_response(arxiv_id: str, markdown: str, source_url: str | None) -> dict[str, object]:
+    """Wrap Markdown content to mimic Mistral OCR response shape."""
+
+    payload = {
+        "source": "ar5iv",
+        "arxiv_id": arxiv_id,
+        "pages": [
+            {
+                "markdown": markdown,
+                "images": [],
+            }
+        ],
+    }
+    if source_url:
+        payload["source_url"] = source_url
+    return payload
+
+
+def _maybe_fetch_ar5iv_response(arxiv_id: str) -> dict[str, object] | None:
+    """Attempt to fetch Markdown from ar5iv; returns OCR-like response or None."""
+
+    html, source_url = _fetch_ar5iv_html(arxiv_id)
+    if not html:
+        return None
+
+    try:
+        markdown = _html_to_markdown(html)
+    except (RuntimeError, OSError) as exc:
+        logger.warning("Pandoc conversion failed for {}: {}", arxiv_id, exc)
+        return None
+
+    markdown = _strip_reference_section(markdown)
+    logger.debug("Using ar5iv markdown for {}", arxiv_id)
+    return _markdown_to_ocr_response(arxiv_id, markdown, source_url)
 
 def download_arxiv_pdf(arxiv_id: str, output_path: pathlib.Path, retry_delay: float = ARXIV_DOWNLOAD_DELAY, max_retries: int = 3) -> bool:
     """
@@ -61,18 +210,29 @@ def download_arxiv_pdf(arxiv_id: str, output_path: pathlib.Path, retry_delay: fl
     logger.error(f"Failed to download {arxiv_id} after {max_retries} attempts")
     return False
 
-def ocr_by_id(arxiv_id: str, pdf_cache_dir: pathlib.Path | None = None, cleanup_pdf: bool = False):
+def ocr_by_id(
+    arxiv_id: str,
+    pdf_cache_dir: pathlib.Path | None = None,
+    cleanup_pdf: bool = False,
+    ar5iv: bool = True,
+):
     """
-    OCR a single arXiv paper by downloading PDF first, then uploading to Mistral.
+    OCR a single arXiv paper by preferring ar5iv HTML when available.
     
     Args:
         arxiv_id: arXiv paper ID
         pdf_cache_dir: Directory to cache downloaded PDFs (default: temp dir)
         cleanup_pdf: Whether to delete the PDF after processing
+        ar5iv: If True, attempt ar5iv HTML → Markdown before PDF OCR
     
     Returns:
         OCR response object from Mistral API
     """
+    if ar5iv:
+        ar5iv_response = _maybe_fetch_ar5iv_response(arxiv_id)
+        if ar5iv_response:
+            return ar5iv_response
+
     api_key = os.environ["MISTRAL_API_KEY"]
     client = Mistral(api_key=api_key)
     
@@ -124,11 +284,12 @@ def ocr_by_id(arxiv_id: str, pdf_cache_dir: pathlib.Path | None = None, cleanup_
             pdf_path.unlink()
 
 def ocr_by_id_batch(
-    arxiv_ids: list[str], 
+    arxiv_ids: list[str],
     pdf_cache_dir: pathlib.Path | None = None,
     cleanup_pdfs: bool = False,
-    wait_for_completion: bool = True, 
-    poll_interval: int = 10
+    wait_for_completion: bool = True,
+    poll_interval: int = 10,
+    ar5iv: bool = True,
 ):
     """
     Batch OCR processing for multiple arXiv papers.
@@ -140,11 +301,36 @@ def ocr_by_id_batch(
         cleanup_pdfs: Whether to delete PDFs after processing
         wait_for_completion: If True, wait for batch job to complete and return results
         poll_interval: Seconds to wait between status checks (default: 10)
+        ar5iv: If True, attempt ar5iv HTML → Markdown shortcut before OCR batch
     
     Returns:
         If wait_for_completion=True: dict mapping arxiv_id to OCR response
         If wait_for_completion=False: (batch_job, uploaded_file_ids, pdf_paths) for manual tracking
     """
+    if ar5iv and not wait_for_completion:
+        logger.warning("ar5iv shortcut requires wait_for_completion=True; disabling ar5iv path")
+        ar5iv = False
+
+    ar5iv_results: dict[str, dict[str, object]] = {}
+    pending_ids: list[str] = list(arxiv_ids)
+
+    if ar5iv:
+        pending_ids = []
+        for arxiv_id in arxiv_ids:
+            ar5iv_response = _maybe_fetch_ar5iv_response(arxiv_id)
+            if ar5iv_response:
+                ar5iv_results[arxiv_id] = ar5iv_response
+            else:
+                pending_ids.append(arxiv_id)
+
+    if not pending_ids:
+        logger.info(
+            "ar5iv hits: %d/%d (skipped OCR batch)",
+            len(ar5iv_results),
+            len(arxiv_ids),
+        )
+        return ar5iv_results
+
     api_key = os.environ["MISTRAL_API_KEY"]
     client = Mistral(api_key=api_key)
     
@@ -154,9 +340,9 @@ def ocr_by_id_batch(
     pdf_cache_dir.mkdir(parents=True, exist_ok=True)
     
     # Download PDFs with rate limiting
-    logger.info(f"Downloading {len(arxiv_ids)} PDFs from arXiv...")
+    logger.info(f"Downloading {len(pending_ids)} PDFs from arXiv...")
     pdf_paths = {}
-    for i, arxiv_id in enumerate(arxiv_ids):
+    for i, arxiv_id in enumerate(pending_ids):
         pdf_path = pdf_cache_dir / f"{arxiv_id}.pdf"
         
         if not pdf_path.exists():
@@ -284,7 +470,14 @@ def ocr_by_id_batch(
                 except Exception as e:
                     logger.warning(f"Failed to delete PDF {pdf_path}: {e}")
         
-        return results
+        logger.info(
+            "ar5iv hits: %d/%d (remaining %d processed via OCR)",
+            len(ar5iv_results),
+            len(arxiv_ids),
+            len(results),
+        )
+        combined_results = {**ar5iv_results, **results}
+        return combined_results
         
     finally:
         # Clean up batch JSONL file
@@ -394,7 +587,11 @@ def response2md(ocr_response, output_dir: str | pathlib.Path, filename: str):
     num_pages = len(md_parts)
     num_images = len(replacements)
     
-    logger.info(f"Markdown saved to: {md_path}")
-    logger.info(f"Total pages: {num_pages} | Total images: {num_images}")
+    logger.info(
+        "Markdown saved to %s (pages=%d, images=%d)",
+        md_path,
+        num_pages,
+        num_images,
+    )
 
     

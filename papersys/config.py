@@ -131,6 +131,12 @@ class SummaryConfig(BaseConfig):
     poll_interval: int = 30
 
 
+class OCRConfig(BaseConfig):
+    """OCR pipeline configuration."""
+
+    ar5iv: bool = True
+
+
 class NotionConfig(BaseConfig):
     """Notion sync configuration."""
 
@@ -145,6 +151,7 @@ class AppConfig(BaseConfig):
     paper: PaperConfig
     recommend: RecommendConfig
     summary: SummaryConfig
+    ocr: OCRConfig = OCRConfig()
     git_store: GitStoreConfig
     notion: NotionConfig
 
@@ -156,6 +163,7 @@ __all__ += [
     "PaperConfig",
     "RecommendConfig",
     "SummaryConfig",
+    "OCRConfig",
     "GitStoreConfig",
     "NotionConfig",
     "AppConfig",
