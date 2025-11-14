@@ -7,10 +7,10 @@
 
 ## 总览（只这三步）
 
-1. **构建原型（一次性/增量）**：把正反馈聚成若干“兴趣原型”，负反馈聚成“厌恶原型”。
+1. **构建原型（一次性/增量）**：只把正反馈聚成若干“兴趣原型”，噪声样本留待后续再观察。
 2. **统一打分函数**：所有候选只用一个分数
    [
-   r(x)=\underbrace{s_{\text{pos}}(x)}*{\text{正原型聚合相似}}-\lambda\cdot \underbrace{s*{\text{neg}}(x)}*{\text{负原型聚合相似}}+\beta\cdot \underbrace{fresh(x)}*{\text{新鲜度}}
+   r(x)=\underbrace{s_{\text{pos}}(x)}*{\text{正原型聚合相似}}+\beta\cdot \underbrace{fresh(x)}*{\text{新鲜度}}
    ]
 3. **统一选拔流程**：按**原型配额（UCB）→ 合并去重 → 单一阈值二分类**；可选极少量 LLM 仅“判边”。
 
@@ -18,18 +18,13 @@
 
 ---
 
-## 1) 原型构建（正/负同法，轻量 CPU）
+## 1) 原型构建（正样本即可，轻量 CPU）
 
 * 对正样本嵌入 (P_{pos}) 用 **HDBSCAN**（样本只有几百，很快；无需设簇数）：
 
-  * 推荐：`min_cluster_size=5, min_samples=None, metric='cosine'`
+  * 推荐：`min_cluster_size=4, min_samples=2, metric='cosine'`
   * 产出 K 个簇（可能含噪声点）。
 * 每个簇 (C_i) 的**原型向量** (c_i)：用**加权质心**（近期样本权重略高，如 `w = exp(-Δdays/τ)`，τ=180 天）。
-* 负样本少时：
-
-  * 若数量足够也用 HDBSCAN 得到 (d_j)；
-  * 否则直接把每条负样本当成一个“微原型”（再做轻度聚合：相似度>0.9 的合并）。
-
 > 这一步只在**训练后/每日**跑一次。在线新增反馈时，用**最近邻归类**（相似度>0.6 则并入近邻簇并更新质心；否则先放到“新兴趣缓存”，累计≥3 且彼此相似才新开簇）。
 
 > 虽然 PCA 是一种常见的降维技术，但它是一种线性方法，无法捕捉嵌入空间中复杂的非线性语义结构，导致聚类分离效果不佳 22。UMAP (Uniform Manifold Approximation and Projection) 是一种基于流形学习的非线性降维技术，它在保留局部和全局结构方面均优于 PCA 和 t-SNE，这对于基于密度的算法至关重要 24。一个常见的陷阱是使用 UMAP 的默认参数，这些参数是为可视化（例如 n_components=2）而调整的，这对于聚类任务是错误的。如“UMAP for Clustering”教程和 BERTopic 等 SOTA 管线所示 21，使用为可视化调整的参数会产生误导性的聚类并破坏真实的密度结构 28。为了优化 HDBSCAN 的输入，UMAP 参数必须专门设置为增强密度信号。1.4 步骤三：使用 HDBSCAN 进行鲁棒的密度聚类管线的最后一步是 HDBSCAN (Hierarchical Density-Based Spatial Clustering of Applications with Noise) 9。选择 HDBSCAN 而非 K-Means 30 是基于其三大优势：无需指定 $k$：HDBSCAN 不需要预先定义用户兴趣的数量。它根据数据的密度自动找出最佳的聚类数量 18。鲁棒的噪声处理：HDBSCAN 会将不属于任何聚类的点标记为“噪声” (outliers) 18。这对于用户画像至关重要，因为并非用户的每一次交互都属于某个核心兴趣。K-Means 会迫使这些噪声点进入一个聚类，从而污染原型。可变密度和形状：HDBSCAN 能够发现 K-Means 无法处理的可变密度和任意形状的聚类
@@ -49,16 +44,7 @@ s_{\text{pos}}(x)=\frac{1}{\tau_p}\log\sum_{i=1}^{K}\exp\left(\tau_p\cdot \cos(x
 * 直觉：既能让最匹配的原型发力（像 max），又给次匹配原型**保留少量贡献**（防茧房）。
 * 超参：(\tau_p=10)（温度，高一点更接近 max；你可在 5–20 间调）。
 
-### 2.2 负原型聚合相似 (s_{\text{neg}}(x))
-
-同样形式：
-[
-s_{\text{neg}}(x)=\frac{1}{\tau_n}\log\sum_{j=1}^{M}\exp\left(\tau_n\cdot \cos(x,d_j)\right)
-]
-
-* 超参：(\tau_n=10)。
-
-### 2.3 新鲜度项 (fresh(x))
+### 2.2 新鲜度项 (fresh(x))
 
 [
 fresh(x)=\exp(-\Delta \text{days}/\tau_f),\quad \tau_f=180
@@ -66,14 +52,14 @@ fresh(x)=\exp(-\Delta \text{days}/\tau_f),\quad \tau_f=180
 
 * (\Delta\text{days}) 是距当前的天数。**只是一点点加成**，确保“跟进最新”。
 
-### 2.4 最终分数（唯一）
+### 2.3 最终分数（唯一）
 
 [
-\boxed{r(x)=s_{\text{pos}}(x)-\lambda\cdot s_{\text{neg}}(x)+\beta\cdot fresh(x)}
+\boxed{r(x)=s_{\text{pos}}(x)+\beta\cdot fresh(x)}
 ]
 
-* 默认：(\lambda=1.0,\ \beta=0.05)。
-* 你也可以用一个**极小的 LR 校准器**把 ([s_{pos}, s_{neg}, fresh]) → 概率；但**无论是否校准，外部只看 (r(x))**。
+* 默认：(\beta=0.05)。
+* 你也可以用一个**极小的 LR 校准器**把 ([s_{pos}, fresh]) → 概率；但**无论是否校准，外部只看 (r(x))**。
 
 > 注意：**系统里只有这个 r(x)**。任何“top-k/配额/探索”都只是**从库里拿哪些候选**，不改变 r(x) 的定义与排序。
 
@@ -97,7 +83,7 @@ fresh(x)=\exp(-\Delta \text{days}/\tau_f),\quad \tau_f=180
 * **一次性过滤**（与 r(x) 无关的硬规则）：
 
   * 去掉**已看/已评/已排除**；
-  * 若与任一负原型 (\cos(x,d_j)\ge \theta_{\text{neg}})（如 0.85）则**直接丢弃**（防踩雷）；
+  * 命中人工黑名单/业务雷区（作者、venue、主题标签等）直接丢弃；
   * 候选池合并去重：若两篇 (\cos\ge 0.97) 视为近重复，保留更近/更新的一篇。
 * **（可选）新奇池**：再额外抽取少量（例如总量的 5%）“**远但不太远**”的论文：
   (0.2\le \max_i \cos(x,c_i)\le 0.4) 且 fresh 高。只用于**拓展边界**。
@@ -133,12 +119,11 @@ fresh(x)=\exp(-\Delta \text{days}/\tau_f),\quad \tau_f=180
 
 ## 训练/更新与评估（同一条逻辑）
 
-* **训练**：不训练大模型。仅离线聚类（HDBSCAN）+ 保存原型；可选一个**极小 LR 校准器**（输入 ([s_{pos}, s_{neg}, fresh])，输出校准概率），但**推荐判定仍按 r(x) vs t**，校准器只用于 debug。
+* **训练**：不训练大模型。仅离线聚类（HDBSCAN）+ 保存原型；可选一个**极小 LR 校准器**（输入 ([s_{pos}, fresh])，输出校准概率），但**推荐判定仍按 r(x) vs t**，校准器只用于 debug。
 * **增量**：新 like：
 
   * 若与某 (c_i) 相似≥0.6 → 并入并更新质心；
   * 否则进“新兴趣缓存”，缓存≥3 且互相相似≥0.6 → 新建原型。
-    新 dislike 类似更新 (d_j) 或合并近重复。
 * **评估**：严格 **prequential**：每次先用旧原型 + 旧阈值预测，再纳入新反馈更新原型/阈值。
   统计 Top-line（通过率/点击率）、多样性（覆盖多少原型/类别）、新颖采纳率（来自新奇池的正反馈占比）。
 
@@ -146,11 +131,9 @@ fresh(x)=\exp(-\Delta \text{days}/\tau_f),\quad \tau_f=180
 
 ## 关键超参（给定默认值即可跑）
 
-* HDBSCAN：`min_cluster_size=5, metric='cosine'`
-* 聚合温度：(\tau_p=\tau_n=10)
-* 负屏蔽阈值：(\theta_{\text{neg}}=0.85)
+* HDBSCAN：`min_cluster_size=4, min_samples=2, metric='cosine'`
+* 聚合温度：(\tau_p=10)
 * 新鲜度：(\tau_f=180) 天，(\beta=0.05)
-* 差异权：(\lambda=1.0)
 * UCB：(c=0.7)，每簇最低配额 `min_quota=10`
 * 候选总量 (B=200)
 * 新奇池占比：5%，相似门槛 ([0.2,0.4])
@@ -166,8 +149,8 @@ fresh(x)=\exp(-\Delta \text{days}/\tau_f),\quad \tau_f=180
 * 不再训练大 LR；改为：
 
   1. 从 `positive = labeled[PREFERENCE=='like']` 得到嵌入，跑 HDBSCAN → (c_i)
-  2. 从 `dislike` 得到 (d_j)（少则不聚、合并近重复即可）
-  3. 保存 ({c_i}, {d_j}) 与簇-like 的时间戳用于权重
+  2. 把噪声/长尾样本暂存到“新兴趣缓存”，累计≥3 且彼此相似再开新簇
+  3. 保存 ({c_i}) 与簇-like 的时间戳用于权重
 
 ### B) 预测阶段：替换 `predict()` 内部重点
 
@@ -178,11 +161,9 @@ fresh(x)=\exp(-\Delta \text{days}/\tau_f),\quad \tau_f=180
       # vec: (d,), centers: (k,d)
       sims = cosine_sim(vec, centers)            # (k,)
       return (1.0/tau) * logsumexp(tau * sims)   # scalar
-  r = agg_softmax_sims(x, C_pos, tau_p) \
-      - lambda_ * agg_softmax_sims(x, C_neg, tau_n) \
-      + beta * freshness(x_date)
+  r = agg_softmax_sims(x, C_pos, tau_p) + beta * freshness(x_date)
   ```
-* 候选来自**原型配额检索**（UCB→配额→ANN top-k→负屏蔽→去重→+新奇池）。
+* 候选来自**原型配额检索**（UCB→配额→ANN top-k→去重/黑名单→+新奇池）。
 * 计算全部候选的 (r(x)) → 用历史分位阈值 (t) 做二分类；
   **如果需要你的 `adaptive_sample` 控制展示比例**，直接把 `scores=r(x)` 喂进去即可（高阈=少推，低阈=多推），但**不要再改打分规则**。
 
@@ -227,7 +208,7 @@ LLM 在这时**不再是“主要算法”，而是三个“增强点”**。
 
 ### 用途
 
-* 给每个正/负原型生成一行自然语言描述，供调试和给 LLM 自己用。
+* 给每个正原型生成一行自然语言描述，供调试和给 LLM 自己用。
 * 让系统更“理解自己”的画像。
 
 ### 实现

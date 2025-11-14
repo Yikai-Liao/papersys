@@ -13,3 +13,15 @@ data
 
 .DS_Store
 **/*.parquet
+
+# Experiment artifacts
+docs/reports/baseline_rank.json
+docs/reports/ucb_rank.json
+docs/images/preference_clusters_baseline.png
+docs/images/preference_clusters_ucb.png
+docs/images/preference_clusters_ucb00.png
+docs/images/preference_clusters_ucb07.png
+docs/reports/preference_clusters_ucb.json
+docs/reports/preference_clusters_baseline.json
+docs/reports/preference_clusters_ucb00.json
+docs/reports/preference_clusters_ucb07.json

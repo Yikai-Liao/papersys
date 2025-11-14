@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 from collections import Counter
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -47,16 +46,12 @@ class Args:
     cluster_metric: str
     viz_n_neighbors: int
     sample_size: int
+    skip_git_sync: bool
     plot_path: Path
     report_path: Path
     cluster_cache: Path | None
     load_cache: bool
     save_cache: bool
-    ucb_coef: float
-    ucb_recency_days: int
-    ucb_epsilon: float
-    candidate_budget: int
-    min_quota: int
 
 
 def parse_args() -> Args:
@@ -77,14 +72,14 @@ def parse_args() -> Args:
     parser.add_argument(
         "--min-cluster-size",
         type=int,
-        default=4,
-        help="HDBSCAN 的 min_cluster_size (默认: 4，推荐用于 10+ 簇)",
+        default=5,
+        help="HDBSCAN 的 min_cluster_size (默认: 5)",
     )
     parser.add_argument(
         "--min-samples",
         type=int,
-        default=2,
-        help="HDBSCAN 的 min_samples (默认: 2)",
+        default=None,
+        help="HDBSCAN 的 min_samples，默认跟 min_cluster_size 相同",
     )
     parser.add_argument(
         "--cluster-dim",
@@ -95,8 +90,8 @@ def parse_args() -> Args:
     parser.add_argument(
         "--cluster-n-neighbors",
         type=int,
-        default=40,
-        help="聚类用 UMAP 的 n_neighbors (默认: 40)",
+        default=30,
+        help="聚类用 UMAP 的 n_neighbors (默认: 30)",
     )
     parser.add_argument(
         "--cluster-metric",
@@ -107,14 +102,19 @@ def parse_args() -> Args:
     parser.add_argument(
         "--viz-n-neighbors",
         type=int,
-        default=20,
-        help="可视化 UMAP 的 n_neighbors (默认: 20)",
+        default=15,
+        help="可视化 UMAP 的 n_neighbors (默认: 15)",
     )
     parser.add_argument(
         "--sample-size",
         type=int,
         default=5,
         help="每个簇输出多少代表样本 (默认: 5)",
+    )
+    parser.add_argument(
+        "--skip-git-sync",
+        action="store_true",
+        help="跳过 GitStore.ensure_local_copy",
     )
     parser.add_argument(
         "--plot-path",
@@ -144,36 +144,6 @@ def parse_args() -> Args:
         action="store_true",
         help="将本次聚类的 enriched 数据写入 --cluster-cache",
     )
-    parser.add_argument(
-        "--ucb-coef",
-        type=float,
-        default=0.7,
-        help="UCB 探索系数 c (默认: 0.7)",
-    )
-    parser.add_argument(
-        "--ucb-recency-days",
-        type=int,
-        default=30,
-        help="最近点赞窗口天数，用于估计 UCB 成功率 (默认: 30)",
-    )
-    parser.add_argument(
-        "--ucb-epsilon",
-        type=float,
-        default=1.0,
-        help="UCB 分母平滑常数 epsilon (默认: 1.0)",
-    )
-    parser.add_argument(
-        "--candidate-budget",
-        type=int,
-        default=200,
-        help="单轮候选预算 B，用于根据 UCB 分配配额 (默认: 200)",
-    )
-    parser.add_argument(
-        "--min-quota",
-        type=int,
-        default=10,
-        help="每个聚类最少候选数 (默认: 10)",
-    )
     raw = parser.parse_args()
     min_samples = raw.min_samples if raw.min_samples is not None else raw.min_cluster_size
     return Args(
@@ -186,16 +156,12 @@ def parse_args() -> Args:
         cluster_metric=raw.cluster_metric,
         viz_n_neighbors=raw.viz_n_neighbors,
         sample_size=raw.sample_size,
+        skip_git_sync=raw.skip_git_sync,
         plot_path=raw.plot_path,
         report_path=raw.report_path,
         cluster_cache=raw.cluster_cache,
         load_cache=raw.load_cache,
         save_cache=raw.save_cache,
-        ucb_coef=raw.ucb_coef,
-        ucb_recency_days=raw.ucb_recency_days,
-        ucb_epsilon=raw.ucb_epsilon,
-        candidate_budget=raw.candidate_budget,
-        min_quota=raw.min_quota,
     )
 
 
@@ -204,7 +170,8 @@ def main() -> None:
     app_config = AppConfig.from_toml(args.config)
 
     git_store = GitStore(app_config.git_store)
-    git_store.ensure_local_copy()
+    if not args.skip_git_sync:
+        git_store.ensure_local_copy()
 
     (
         enriched,
@@ -222,22 +189,12 @@ def main() -> None:
         probabilities,
         sample_size=args.sample_size,
     )
-    ucb_allocations, effective_min_quota = compute_ucb_allocations(
-        enriched,
-        recency_days=args.ucb_recency_days,
-        coef=args.ucb_coef,
-        epsilon=args.ucb_epsilon,
-        budget=args.candidate_budget,
-        min_quota=args.min_quota,
-    )
-    cluster_summaries = merge_ucb_stats(cluster_summaries, ucb_allocations)
     report = build_report_dict(
         args=args,
         total_points=enriched.height,
         noise_count=int((labels == -1).sum()),
         cluster_summaries=cluster_summaries,
         clusterer=clusterer,
-        effective_min_quota=effective_min_quota,
     )
     write_report(args.report_path, report)
     print_human_summary(report)
@@ -262,20 +219,14 @@ def load_preferences(path: Path, label: str) -> pl.DataFrame:
     df = df.filter(pl.col(PREFERENCE) == label)
     if df.is_empty():
         raise RuntimeError(f"没有偏好标签 '{label}' 的记录。")
-    today = date.today()
-    if PREFERENCE_DATE not in df.columns:
-        logger.warning("偏好文件缺少 {} 列，使用今天 {} 作为占位。", PREFERENCE_DATE, today)
-        df = df.with_columns(pl.lit(today).cast(pl.Date).alias(PREFERENCE_DATE))
-    else:
-        df = df.with_columns(
+    df = (
+        df.with_columns(
             pl.col(PREFERENCE_DATE)
             .str.strptime(pl.Date, strict=False)
             .alias(PREFERENCE_DATE)
         )
-    df = (
-        df.sort([PREFERENCE_DATE, ID])
+        .sort(PREFERENCE_DATE)
         .unique(subset=[ID], keep="last")
-        .sort([PREFERENCE_DATE, ID])
     )
     return df
 
@@ -541,150 +492,6 @@ def collect_tokens(values: list[Any]) -> list[str]:
     return [token for token, _ in counter.most_common()]
 
 
-def compute_ucb_allocations(
-    df: pl.DataFrame,
-    *,
-    recency_days: int,
-    coef: float,
-    epsilon: float,
-    budget: int,
-    min_quota: int,
-) -> tuple[list[dict[str, Any]], int]:
-    valid = df.filter(pl.col("cluster_label") >= 0)
-    if valid.is_empty():
-        return [], min_quota
-
-    cutoff = date.today() - timedelta(days=max(recency_days, 1))
-    stats = (
-        valid.group_by("cluster_label")
-        .agg(
-            pl.len().alias("total_likes"),
-            pl.when(pl.col(PREFERENCE_DATE) >= cutoff)
-            .then(1)
-            .otherwise(0)
-            .sum()
-            .alias("recent_likes"),
-            pl.col("cluster_probability").mean().alias("mean_probability"),
-        )
-        .sort("cluster_label")
-    )
-    rows = stats.to_dicts()
-    total_events = sum(row["total_likes"] for row in rows)
-    log_total = math.log(max(total_events, 1) + 1.0) if total_events else 0.0
-
-    for row in rows:
-        total = row["total_likes"]
-        recent = row["recent_likes"]
-        ratio = recent / total if total else 0.0
-        explore = coef * math.sqrt(log_total / (total + epsilon)) if total else coef
-        row["recent_like_ratio"] = ratio
-        row["ucb_score"] = ratio + explore
-    allocated, effective_min = allocate_candidate_quota(
-        rows,
-        budget=budget,
-        min_quota=min_quota,
-    )
-    return allocated, effective_min
-
-
-def allocate_candidate_quota(
-    rows: list[dict[str, Any]],
-    *,
-    budget: int,
-    min_quota: int,
-) -> tuple[list[dict[str, Any]], int]:
-    if not rows:
-        return rows, min_quota
-    cluster_count = len(rows)
-    if budget <= 0:
-        for row in rows:
-            row["raw_quota"] = 0.0
-            row["quota"] = 0
-            row["quota_share"] = 0.0
-            row["quota_fraction"] = 0.0
-        return rows, 0
-
-    effective_min = min_quota
-    min_total = min_quota * cluster_count
-    if min_total > budget:
-        effective_min = max(budget // cluster_count, 0)
-
-    sum_scores = sum(row["ucb_score"] for row in rows)
-    if sum_scores <= 0:
-        raw_quota = budget / cluster_count
-        for row in rows:
-            row["raw_quota"] = raw_quota
-    else:
-        for row in rows:
-            row["raw_quota"] = budget * row["ucb_score"] / sum_scores
-
-    for row in rows:
-        floor_val = math.floor(row["raw_quota"])
-        row["_floor_quota"] = floor_val
-        row["quota_fraction"] = row["raw_quota"] - floor_val
-        row["quota"] = max(effective_min, floor_val)
-
-    total_alloc = sum(row["quota"] for row in rows)
-    if total_alloc > budget:
-        overflow = total_alloc - budget
-        adjustable = sorted(
-            rows,
-            key=lambda item: item["quota"] - effective_min,
-            reverse=True,
-        )
-        for row in adjustable:
-            reducible = row["quota"] - effective_min
-            if reducible <= 0:
-                continue
-            take = min(reducible, overflow)
-            row["quota"] -= take
-            overflow -= take
-            if overflow <= 0:
-                break
-    elif total_alloc < budget:
-        remainder = budget - total_alloc
-        if remainder > 0:
-            candidates = sorted(
-                rows,
-                key=lambda item: item["quota_fraction"],
-                reverse=True,
-            )
-            idx = 0
-            while remainder > 0 and candidates:
-                row = candidates[idx % len(candidates)]
-                row["quota"] += 1
-                remainder -= 1
-                idx += 1
-
-    for row in rows:
-        row["quota_share"] = row["quota"] / budget if budget > 0 else 0.0
-        row["quota_fraction"] = float(row["quota_fraction"])
-        row.pop("_floor_quota", None)
-    return rows, effective_min
-
-
-def merge_ucb_stats(
-    summaries: list[dict[str, Any]],
-    allocations: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    mapping = {row["cluster_label"]: row for row in allocations}
-    for summary in summaries:
-        stats = mapping.get(summary["label"])
-        if not stats:
-            continue
-        summary.update(
-            {
-                "total_likes": stats["total_likes"],
-                "recent_likes": stats["recent_likes"],
-                "recent_like_ratio": stats["recent_like_ratio"],
-                "ucb_score": stats["ucb_score"],
-                "candidate_quota": stats["quota"],
-                "quota_share": stats["quota_share"],
-            }
-        )
-    return summaries
-
-
 def build_report_dict(
     *,
     args: Args,
@@ -692,7 +499,6 @@ def build_report_dict(
     noise_count: int,
     cluster_summaries: list[dict[str, Any]],
     clusterer: hdbscan.HDBSCAN,
-    effective_min_quota: int,
 ) -> dict[str, Any]:
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -711,14 +517,6 @@ def build_report_dict(
         else [],
         "plot_path": str(args.plot_path),
         "report_path": str(args.report_path),
-        "ucb": {
-            "coef": args.ucb_coef,
-            "recency_days": args.ucb_recency_days,
-            "epsilon": args.ucb_epsilon,
-            "budget": args.candidate_budget,
-            "min_quota": args.min_quota,
-            "effective_min_quota": effective_min_quota,
-        },
         "clusters": cluster_summaries,
     }
 
@@ -735,26 +533,10 @@ def print_human_summary(report: dict[str, Any]) -> None:
         f"{len(report['clusters'])} 个簇 (noise={report['noise_count']})"
     )
     print(header)
-    ucb_info = report.get("ucb")
-    if ucb_info:
-        print(
-            "UCB: "
-            f"c={ucb_info['coef']} "
-            f"window={ucb_info['recency_days']}d "
-            f"B={ucb_info['budget']} "
-            f"min={ucb_info['effective_min_quota']}"
-        )
     for cluster in report["clusters"]:
-        quota = cluster.get("candidate_quota")
-        ucb_score = cluster.get("ucb_score")
-        ratio = cluster.get("recent_like_ratio")
-        ucb_text = f"{ucb_score:.3f}" if isinstance(ucb_score, (int, float)) else "n/a"
-        ratio_text = f"{ratio:.2f}" if isinstance(ratio, (int, float)) else "n/a"
-        quota_text = quota if isinstance(quota, int) else 0
         print(
             f"- cluster {cluster['label']} "
-            f"(n={cluster['size']}, mean_p={cluster['mean_probability']:.2f}, "
-            f"ucb={ucb_text}, recent={ratio_text}, quota={quota_text}) "
+            f"(n={cluster['size']}, mean_p={cluster['mean_probability']:.2f}) "
             f"cats={', '.join(cluster['top_categories'][:3])}"
         )
         for sample in cluster["samples"]:
