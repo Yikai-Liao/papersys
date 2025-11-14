@@ -1,0 +1,2 @@
+Project: papersys. Date: 2025-11-14.
+Enhanced scripts/cluster_preferences.py with UCB-based quota computation (new CLI flags for c, recency window, epsilon, budget, min quota), cluster statistics injection, and fallback when preference.csv lacks dates. Generated before/after reports (docs/reports/preference_clusters_ucb00.json & _ucb07.json) recommending c≈0.7 to balance exploration. Updated docs/recommend_by_cluster.md to drop negative-sample assumptions.
