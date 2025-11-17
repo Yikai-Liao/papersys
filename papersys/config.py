@@ -120,6 +120,7 @@ class ClusterUctConfig(BaseConfig):
     """Cluster + UCT strategy configuration."""
 
     min_cluster_size: int = 4
+    cluster_min_samples: int = 2
     cluster_dim: int = 50
     cluster_n_neighbors: int = 40
     cluster_metric: Literal["cosine", "euclidean"] = "cosine"

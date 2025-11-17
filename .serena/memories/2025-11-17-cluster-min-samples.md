@@ -1,0 +1,2 @@
+Project: papersys. Date: 2025-11-17.
+Added cluster_min_samples hyper-parameter to ClusterUctConfig (default 2) and wiring in cluster_uct algorithm/config.toml so HDBSCAN min_samples matches the CLI script defaults, restoring the expected 8-11 cluster granularity after modularization.

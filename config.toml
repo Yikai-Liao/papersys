@@ -12,10 +12,10 @@ dim = 1536
 categories = ["cs.CL", "cs.CV", "cs.AI", "cs.LG", "stat.ML", "cs.IR", "cs.CY"]
 
 [git_store]
-# 独立 Git 仓库地址（可使用 HTTPS + token 或 SSH）
+# Standalone Git repository URL (HTTPS + token or SSH acceptable)
 repo_url = "https://github.com/Yikai-Liao/papersys-data.git"
 branch = "main"
-# 相对于仓库根目录的路径
+# Path relative to the repository root
 summary_dir = "summaries"
 preference_file = "preference.csv"
 
@@ -44,6 +44,7 @@ k_smote = 16
 
 [recommend.cluster_uct]
 min_cluster_size = 4
+cluster_min_samples = 2
 cluster_dim = 50
 cluster_n_neighbors = 40
 cluster_metric = "cosine"
@@ -52,7 +53,7 @@ ucb_coef = 0.7
 ucb_recency_days = 30
 ucb_epsilon = 1.0
 
-# 预测配置
+# Prediction configuration
 [recommend.predict]
 last_n_days = 60
 sample_rate = 0.01

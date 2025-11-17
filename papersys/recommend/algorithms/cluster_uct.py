@@ -49,11 +49,14 @@ class ClusterUctAlgorithm(BaseRecommendAlgorithm):
             n_neighbors=self.strategy.cluster_n_neighbors,
             random_state=self.config.seed,
         )
+        min_samples = self.strategy.cluster_min_samples
+        if min_samples <= 0:
+            min_samples = self.strategy.min_cluster_size
 
         labels, probabilities, _ = run_hdbscan(
             cluster_vectors,
             min_cluster_size=self.strategy.min_cluster_size,
-            min_samples=self.strategy.min_cluster_size,
+            min_samples=min_samples,
             metric=self.strategy.cluster_metric,
         )
         cluster_ids = sorted({int(label) for label in labels if label >= 0})

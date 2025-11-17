@@ -67,118 +67,118 @@ class Args:
 
 def parse_args() -> Args:
     parser = argparse.ArgumentParser(
-        description="对偏好样本做 HDBSCAN 聚类，可视化并输出代表样本"
+        description="Cluster preference samples with HDBSCAN, visualize results, and export representative examples"
     )
     parser.add_argument(
         "--config",
         type=Path,
         default=DEFAULT_CONFIG_PATH,
-        help="配置文件路径 (默认: config.toml)",
+        help="Path to the config file (default: config.toml)",
     )
     parser.add_argument(
         "--preference-label",
         default="like",
-        help="只聚类该偏好标签的样本 (默认: like)",
+        help="Only cluster samples with this preference label (default: like)",
     )
     parser.add_argument(
         "--min-cluster-size",
         type=int,
         default=4,
-        help="HDBSCAN 的 min_cluster_size (默认: 4，推荐用于 10+ 簇)",
+        help="HDBSCAN min_cluster_size (default: 4, recommended for 10+ clusters)",
     )
     parser.add_argument(
         "--min-samples",
         type=int,
         default=2,
-        help="HDBSCAN 的 min_samples (默认: 2)",
+        help="HDBSCAN min_samples (default: 2)",
     )
     parser.add_argument(
         "--cluster-dim",
         type=int,
         default=50,
-        help="聚类前的 UMAP 降维维度，<=0 表示不降维 (默认: 50)",
+        help="UMAP dimensionality before clustering (<=0 disables reduction, default: 50)",
     )
     parser.add_argument(
         "--cluster-n-neighbors",
         type=int,
         default=40,
-        help="聚类用 UMAP 的 n_neighbors (默认: 40)",
+        help="n_neighbors for UMAP used in clustering (default: 40)",
     )
     parser.add_argument(
         "--cluster-metric",
         choices=("cosine", "euclidean"),
         default="cosine",
-        help="HDBSCAN 距离度量 (默认: cosine)",
+        help="Distance metric for HDBSCAN (default: cosine)",
     )
     parser.add_argument(
         "--viz-n-neighbors",
         type=int,
         default=20,
-        help="可视化 UMAP 的 n_neighbors (默认: 20)",
+        help="n_neighbors for UMAP used for visualization (default: 20)",
     )
     parser.add_argument(
         "--sample-size",
         type=int,
         default=5,
-        help="每个簇输出多少代表样本 (默认: 5)",
+        help="Number of representative samples per cluster (default: 5)",
     )
     parser.add_argument(
         "--plot-path",
         type=Path,
         default=Path("docs/images/preference_clusters.png"),
-        help="UMAP 可视化图片输出路径",
+        help="Output path for the UMAP visualization image",
     )
     parser.add_argument(
         "--report-path",
         type=Path,
         default=Path("docs/reports/preference_clusters.json"),
-        help="聚类结果 JSON 报告路径",
+        help="Output path for the clustering result JSON report",
     )
     parser.add_argument(
         "--cluster-cache",
         type=Path,
         default=None,
-        help="聚类结果缓存路径（.parquet），供多脚本共享",
+        help="Cluster result cache path (.parquet) for sharing between scripts",
     )
     parser.add_argument(
         "--load-cache",
         action="store_true",
-        help="从 --cluster-cache 读取现有聚类结果，跳过重新聚类",
+        help="Load existing cluster result from --cluster-cache and skip reclustering",
     )
     parser.add_argument(
         "--save-cache",
         action="store_true",
-        help="将本次聚类的 enriched 数据写入 --cluster-cache",
+        help="Write the enriched data from this run into --cluster-cache",
     )
     parser.add_argument(
         "--ucb-coef",
         type=float,
         default=0.7,
-        help="UCB 探索系数 c (默认: 0.7)",
+        help="UCB exploration coefficient c (default: 0.7)",
     )
     parser.add_argument(
         "--ucb-recency-days",
         type=int,
         default=30,
-        help="最近点赞窗口天数，用于估计 UCB 成功率 (默认: 30)",
+        help="Recency window in days for estimating UCB success rate (default: 30)",
     )
     parser.add_argument(
         "--ucb-epsilon",
         type=float,
         default=1.0,
-        help="UCB 分母平滑常数 epsilon (默认: 1.0)",
+        help="UCB denominator smoothing constant epsilon (default: 1.0)",
     )
     parser.add_argument(
         "--candidate-budget",
         type=int,
         default=200,
-        help="单轮候选预算 B，用于根据 UCB 分配配额 (默认: 200)",
+        help="Candidate budget B per round for allocating UCB quotas (default: 200)",
     )
     parser.add_argument(
         "--min-quota",
         type=int,
         default=10,
-        help="每个聚类最少候选数 (默认: 10)",
+        help="Minimum number of candidates per cluster (default: 10)",
     )
     raw = parser.parse_args()
     min_samples = raw.min_samples if raw.min_samples is not None else raw.min_cluster_size
