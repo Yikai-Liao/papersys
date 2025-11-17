@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 import tomllib
 
 from pydantic import BaseModel, ConfigDict
@@ -103,15 +103,40 @@ class PredictConfig(BaseConfig):
     limit: int | None = None
 
 
+class LogisticAlgorithmConfig(BaseConfig):
+    """Logistic regression strategy configuration."""
+
+    neg_sample_ratio: float = 5.0
+    model: LogisticRegressionConfig = LogisticRegressionConfig()
+    confidence_weighted_sampling: ConfidenceWeightedSamplingConfig = (
+        ConfidenceWeightedSamplingConfig()
+    )
+    adaptive_difficulty_sampling: AdaptiveDifficultySamplingConfig = (
+        AdaptiveDifficultySamplingConfig()
+    )
+
+
+class ClusterUctConfig(BaseConfig):
+    """Cluster + UCT strategy configuration."""
+
+    min_cluster_size: int = 4
+    cluster_dim: int = 50
+    cluster_n_neighbors: int = 40
+    cluster_metric: Literal["cosine", "euclidean"] = "cosine"
+    prototype_temperature: float = 50.0
+    ucb_coef: float = 0.7
+    ucb_recency_days: int = 30
+    ucb_epsilon: float = 1.0
+
+
 class RecommendConfig(BaseConfig):
     """Recommendation behaviour configuration."""
 
-    neg_sample_ratio: float = 5.0
+    algorithm: Literal["logistic_regression", "cluster_uct"] = "cluster_uct"
     seed: int = 42
-    logistic_regression: LogisticRegressionConfig
-    confidence_weighted_sampling: ConfidenceWeightedSamplingConfig
-    adaptive_difficulty_sampling: AdaptiveDifficultySamplingConfig
-    predict: PredictConfig
+    predict: PredictConfig = PredictConfig()
+    logistic_regression: LogisticAlgorithmConfig = LogisticAlgorithmConfig()
+    cluster_uct: ClusterUctConfig = ClusterUctConfig()
 
 
 class GitStoreConfig(BaseConfig):

@@ -29,6 +29,11 @@ from papersys.fields import (
     PREFERENCE_DATE,
     TITLE,
 )
+from papersys.recommend.cluster_utils import (
+    maybe_reduce_for_clustering,
+    run_hdbscan,
+    to_normalized_vectors,
+)
 from papersys.storage.git_store import GitStore
 
 matplotlib.use("Agg")
@@ -306,64 +311,6 @@ def load_or_cluster(
         args.cluster_cache.parent.mkdir(parents=True, exist_ok=True)
         enriched.write_parquet(args.cluster_cache)
     return enriched, vectors, labels, probabilities, clusterer
-
-
-def maybe_reduce_for_clustering(
-    vectors: np.ndarray,
-    *,
-    dim: int,
-    n_neighbors: int,
-) -> np.ndarray:
-    if dim <= 0 or vectors.shape[1] <= dim:
-        return vectors
-    effective_neighbors = max(5, min(n_neighbors, len(vectors) - 1))
-    if effective_neighbors < 5:
-        logger.warning("样本太少，跳过聚类降维。")
-        return vectors
-    reducer = umap.UMAP(
-        n_neighbors=effective_neighbors,
-        n_components=dim,
-        min_dist=0.0,
-        metric="cosine",
-        random_state=42,
-    )
-    return reducer.fit_transform(vectors)
-
-
-def to_normalized_vectors(rows: list[list[float]]) -> np.ndarray:
-    if not rows:
-        raise RuntimeError("没有可用嵌入。")
-    matrix = np.asarray(rows, dtype=np.float32)
-    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-    norms = np.clip(norms, a_min=1e-8, a_max=None)
-    return matrix / norms
-
-
-def run_hdbscan(
-    vectors: np.ndarray,
-    *,
-    min_cluster_size: int,
-    min_samples: int,
-    metric: str,
-) -> tuple[np.ndarray, np.ndarray, hdbscan.HDBSCAN]:
-    if len(vectors) < min_cluster_size:
-        raise RuntimeError(
-            f"样本只有 {len(vectors)}，比 min_cluster_size={min_cluster_size} 还小。"
-        )
-    working_vectors = (
-        vectors.astype(np.float64, copy=False) if metric != "euclidean" else vectors
-    )
-    algorithm = "best" if metric == "euclidean" else "generic"
-    clusterer = hdbscan.HDBSCAN(
-        min_cluster_size=min_cluster_size,
-        min_samples=min_samples,
-        metric=metric,
-        algorithm=algorithm,
-        cluster_selection_method="eom",
-    )
-    labels = clusterer.fit_predict(working_vectors)
-    probabilities = clusterer.probabilities_
-    return labels, probabilities, clusterer
 
 
 def project_umap(vectors: np.ndarray, *, n_neighbors: int) -> np.ndarray:

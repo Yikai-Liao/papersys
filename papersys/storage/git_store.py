@@ -84,15 +84,32 @@ class GitStore:
                 {
                     ID: pl.Series(name=ID, values=[], dtype=pl.String),
                     PREFERENCE: pl.Series(name=PREFERENCE, values=[], dtype=pl.String),
+                    PREFERENCE_DATE: pl.Series(name=PREFERENCE_DATE, values=[], dtype=pl.Date),
                 }
             )
 
-        return pl.read_csv(
+        df = pl.read_csv(
             self.preference_path,
-            columns=[ID, PREFERENCE],
-            dtypes={ID: pl.String, PREFERENCE: pl.String},
+            columns=[ID, PREFERENCE, PREFERENCE_DATE],
+            dtypes={ID: pl.String, PREFERENCE: pl.String, PREFERENCE_DATE: pl.String},
             infer_schema_length=0,
         )
+        if PREFERENCE_DATE not in df.columns:
+            logger.warning("偏好文件缺少 {} 列，使用今天 {} 作为占位。", PREFERENCE_DATE, date.today())
+            df = df.with_columns(pl.lit(date.today()).alias(PREFERENCE_DATE))
+        else:
+            df = df.with_columns(
+                pl.col(PREFERENCE_DATE)
+                .str.strptime(pl.Date, strict=False)
+                .fill_null(date.today())
+                .alias(PREFERENCE_DATE)
+            )
+        df = (
+            df.sort([PREFERENCE_DATE, ID])
+            .unique(subset=[ID], keep="last")
+            .sort([PREFERENCE_DATE, ID])
+        )
+        return df
 
     def save_preferences(self, records: Iterable[Mapping[str, str]]) -> None:
         """Write preference records to CSV."""

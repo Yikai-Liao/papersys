@@ -11,19 +11,13 @@ import polars as pl
 from loguru import logger
 
 from ..config import RecommendConfig
-from ..fields import (
-    AUTHORS,
-    CATEGORIES,
-    EMBEDDING_VECTOR,
-    ID,
-    PREFERENCE,
-    PUBLISH_DATE,
-    SCORE,
-    TITLE,
-    UPDATE_DATE,
+from ..fields import CATEGORIES, EMBEDDING_VECTOR, ID, PREFERENCE, UPDATE_DATE
+from .algorithms import (
+    BaseRecommendAlgorithm,
+    RecommendPredictData,
+    RecommendTrainingData,
+    create_algorithm,
 )
-from .sampler import adaptive_sample
-from .trainer import train_model
 
 
 @dataclass(slots=True)
@@ -51,7 +45,7 @@ class Recommender:
         self._preferences = preferences
         self._preference_ids = set(preferences[ID].to_list()) if ID in preferences.columns else set()
         self._excluded_ids = set(excluded_ids) | self._preference_ids
-        self.model = None
+        self._algorithm: BaseRecommendAlgorithm = create_algorithm(config)
 
         logger.info(
             "Loaded datasets (lazy metadata={}, lazy embeddings={}, preferences={})",
@@ -65,7 +59,7 @@ class Recommender:
     # ------------------------------------------------------------------ #
 
     def fit(self, categories: Sequence[str]) -> "Recommender":
-        """Train logistic regression model."""
+        """Prepare dataset slices and delegate to configured algorithm."""
 
         dataset = self._prepare_dataset(categories)
         if dataset.is_empty():
@@ -79,27 +73,18 @@ class Recommender:
         if positive.is_empty():
             raise ValueError("偏好数据中缺少正向样本（like）。")
 
-        candidate_background = dataset.filter(
-            ~pl.col(ID).is_in(labeled[ID])
-        )
-        if candidate_background.is_empty():
-            raise ValueError("缺少负样本候选，无法训练模型。")
-
         logger.info(
-            "Training dataset prepared: positives={}, background={}",
+            "Training dataset prepared: labeled={}, positives={}",
+            labeled.height,
             positive.height,
-            candidate_background.height,
         )
 
-        prefered_df = labeled.rename({EMBEDDING_VECTOR: "embedding"})
-        background_df = candidate_background.rename({EMBEDDING_VECTOR: "embedding"})
-
-        self.model = train_model(
-            prefered_df=prefered_df,
-            remaining_df=background_df,
-            embedding_columns=["embedding"],
-            config=self.config,
+        training_data = RecommendTrainingData(
+            dataset=dataset,
+            labeled=labeled,
+            positive=positive,
         )
+        self._algorithm.fit(training_data)
         return self
 
     # ------------------------------------------------------------------ #
@@ -113,11 +98,9 @@ class Recommender:
         last_n_days: int | None = None,
         start_date: date | None = None,
         end_date: date | None = None,
+        limit: int | None = None,
     ) -> RecommendationResult:
-        """Score candidate papers and return recommendation dataframe."""
-
-        if self.model is None:
-            raise ValueError("尚未训练模型，请先调用 fit()。")
+        """Score candidate papers via configured algorithm."""
 
         start_date, end_date = self._resolve_date_range(last_n_days, start_date, end_date)
         dataset = self._prepare_dataset(categories, start_date=start_date, end_date=end_date)
@@ -140,38 +123,27 @@ class Recommender:
             logger.warning("过滤非法向量后无候选论文。")
             return RecommendationResult(pl.DataFrame())
 
-        embeddings = np.vstack(dataset[EMBEDDING_VECTOR].to_numpy())
-        embeddings = np.nan_to_num(embeddings, nan=0.0)
-
-        scores = self.model.predict_proba(embeddings)[:, 1]
-        predict_cfg = self.config.predict
-
-        show_flags = adaptive_sample(
-            scores,
-            target_sample_rate=predict_cfg.sample_rate,
-            high_threshold=predict_cfg.high_threshold,
-            boundary_threshold=predict_cfg.boundary_threshold,
-            random_state=self.config.seed,
+        prediction = self._algorithm.predict(
+            RecommendPredictData(dataset=dataset, limit=limit),
         )
+        if prediction.is_empty():
+            logger.warning("算法未返回任何推荐结果。")
+            return RecommendationResult(prediction)
 
-        result = dataset.with_columns(
-            pl.Series(SCORE, scores),
-            pl.Series("show", show_flags.astype(np.int8)),
-        )
-        result = result.sort(SCORE, descending=True)
+        recommended = int(prediction["show"].sum()) if "show" in prediction.columns else 0
 
         logger.info(
             "Predicted {} papers, recommended {} ({}%).",
-            result.height,
-            int(show_flags.sum()),
+            prediction.height,
+            recommended,
             (
-                float(show_flags.sum()) / float(len(show_flags)) * 100
-                if len(show_flags)
+                float(recommended) / float(prediction.height) * 100
+                if prediction.height
                 else 0.0
             ),
         )
 
-        return RecommendationResult(result)
+        return RecommendationResult(prediction)
 
     # ------------------------------------------------------------------ #
     # Helpers

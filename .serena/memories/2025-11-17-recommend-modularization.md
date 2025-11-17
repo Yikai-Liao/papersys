@@ -1,0 +1,2 @@
+Project: papersys. Date: 2025-11-17.
+Modularized the recommender pipeline: created papersys.recommend.algorithms with logistic_regression + cluster_uct strategies (softmax proto scoring + UCB quotas) and shared cluster_utils. Reworked RecommendConfig (algorithm flag, algorithm-specific sub-sections incl. cluster_uct) plus config.toml defaults. GitStore.load_preferences now preserves preference dates. CLI logs chosen algorithm; scripts reuse shared clustering helpers.

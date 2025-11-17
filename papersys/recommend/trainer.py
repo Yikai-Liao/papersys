@@ -5,7 +5,7 @@ import polars as pl
 import sklearn.linear_model
 from loguru import logger
 
-from ..config import RecommendConfig
+from ..config import LogisticAlgorithmConfig
 from .sampler import (
     adaptive_difficulty_sampling,
     confidence_weighted_sampling,
@@ -16,7 +16,9 @@ def train_model(
     prefered_df: pl.DataFrame,
     remaining_df: pl.DataFrame,
     embedding_columns: list[str],
-    config: RecommendConfig,
+    config: LogisticAlgorithmConfig,
+    *,
+    seed: int,
 ) -> sklearn.linear_model.LogisticRegression:
     """Train the recommendation model."""
     logger.info("Training logistic regression model")
@@ -34,7 +36,7 @@ def train_model(
         f"Sampling negatives: {positive_sample_num} positive samples -> {neg_sample_num} negatives"
     )
 
-    pesudo_neg_df = remaining_df.sample(n=neg_sample_num, seed=config.seed)
+    pesudo_neg_df = remaining_df.sample(n=neg_sample_num, seed=seed)
     pesudo_neg_df = pesudo_neg_df.with_columns(pl.lit(0).alias("label")).select(
         "label", *embedding_columns
     )
@@ -92,9 +94,9 @@ def train_model(
     if cws_config.enable:
         logger.info("Applying confidence-weighted sampling")
         tmp_model = sklearn.linear_model.LogisticRegression(
-            C=config.logistic_regression.C,
-            max_iter=config.logistic_regression.max_iter,
-            random_state=config.seed,
+            C=config.model.C,
+            max_iter=config.model.max_iter,
+            random_state=seed,
             class_weight="balanced",
         ).fit(x, y)
 
@@ -103,7 +105,7 @@ def train_model(
             tmp_model,
             high_conf_threshold=cws_config.high_conf_threshold,
             high_conf_weight=cws_config.high_conf_weight,
-            random_state=config.seed,
+            random_state=seed,
         )
 
         x = np.concatenate((x[y == 0], new_positive_embedding))
@@ -123,7 +125,7 @@ def train_model(
             unlabeled_data,
             n_neighbors=ads_config.n_neighbors,
             sampling_ratio=ads_config.pos_sampling_ratio,
-            random_state=config.seed,
+            random_state=seed,
             synthetic_ratio=ads_config.synthetic_ratio,
             k_smote=ads_config.k_smote,
         )
@@ -134,9 +136,9 @@ def train_model(
         )
 
     final_model = sklearn.linear_model.LogisticRegression(
-        C=config.logistic_regression.C,
-        max_iter=config.logistic_regression.max_iter,
-        random_state=config.seed,
+        C=config.model.C,
+        max_iter=config.model.max_iter,
+        random_state=seed,
         class_weight="balanced",
     ).fit(x, y)
 

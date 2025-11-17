@@ -20,29 +20,37 @@ summary_dir = "summaries"
 preference_file = "preference.csv"
 
 [recommend]
-# 负样本采样比例
-neg_sample_ratio = 5.0
-# 随机种子
+algorithm = "cluster_uct"
 seed = 42
 
-# 逻辑回归参数
 [recommend.logistic_regression]
+neg_sample_ratio = 5.0
+
+[recommend.logistic_regression.model]
 C = 1.0
 max_iter = 1000
 
-# 置信度加权采样
-[recommend.confidence_weighted_sampling]
+[recommend.logistic_regression.confidence_weighted_sampling]
 enable = false
 high_conf_threshold = 0.9
 high_conf_weight = 2.0
 
-# 自适应难度采样
-[recommend.adaptive_difficulty_sampling]
+[recommend.logistic_regression.adaptive_difficulty_sampling]
 enable = false
 n_neighbors = 5
 pos_sampling_ratio = 2.0
 synthetic_ratio = 0.5
 k_smote = 16
+
+[recommend.cluster_uct]
+min_cluster_size = 4
+cluster_dim = 50
+cluster_n_neighbors = 40
+cluster_metric = "cosine"
+prototype_temperature = 50.0
+ucb_coef = 0.7
+ucb_recency_days = 30
+ucb_epsilon = 1.0
 
 # 预测配置
 [recommend.predict]

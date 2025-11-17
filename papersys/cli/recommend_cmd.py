@@ -74,6 +74,7 @@ def recommend(
 
     logger.info("加载配置：{}", config)
     app_config = load_config(AppConfig, config)
+    logger.info("使用推荐算法：{}", app_config.recommend.algorithm)
 
     selected_categories = categories or app_config.paper.categories
     if not selected_categories:
@@ -120,6 +121,7 @@ def recommend(
         last_n_days=effective_last_n,
         start_date=start_date,
         end_date=end_date,
+        limit=effective_limit,
     ).frame
 
     if result.is_empty():

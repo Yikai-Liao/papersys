@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -29,6 +28,13 @@ from papersys.fields import (
     PREFERENCE,
     PREFERENCE_DATE,
     TITLE,
+)
+from papersys.recommend.cluster_utils import (
+    allocate_candidate_quota,
+    compute_ucb_allocations,
+    maybe_reduce_for_clustering,
+    run_hdbscan,
+    to_normalized_vectors,
 )
 from papersys.storage.git_store import GitStore
 
@@ -357,64 +363,6 @@ def load_or_cluster(
     return enriched, vectors, labels, probabilities, clusterer
 
 
-def maybe_reduce_for_clustering(
-    vectors: np.ndarray,
-    *,
-    dim: int,
-    n_neighbors: int,
-) -> np.ndarray:
-    if dim <= 0 or vectors.shape[1] <= dim:
-        return vectors
-    effective_neighbors = max(5, min(n_neighbors, len(vectors) - 1))
-    if effective_neighbors < 5:
-        logger.warning("样本太少，跳过聚类降维。")
-        return vectors
-    reducer = umap.UMAP(
-        n_neighbors=effective_neighbors,
-        n_components=dim,
-        min_dist=0.0,
-        metric="cosine",
-        random_state=42,
-    )
-    return reducer.fit_transform(vectors)
-
-
-def to_normalized_vectors(rows: list[list[float]]) -> np.ndarray:
-    if not rows:
-        raise RuntimeError("没有可用嵌入。")
-    matrix = np.asarray(rows, dtype=np.float32)
-    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-    norms = np.clip(norms, a_min=1e-8, a_max=None)
-    return matrix / norms
-
-
-def run_hdbscan(
-    vectors: np.ndarray,
-    *,
-    min_cluster_size: int,
-    min_samples: int,
-    metric: str,
-) -> tuple[np.ndarray, np.ndarray, hdbscan.HDBSCAN]:
-    if len(vectors) < min_cluster_size:
-        raise RuntimeError(
-            f"样本只有 {len(vectors)}，比 min_cluster_size={min_cluster_size} 还小。"
-        )
-    working_vectors = (
-        vectors.astype(np.float64, copy=False) if metric != "euclidean" else vectors
-    )
-    algorithm = "best" if metric == "euclidean" else "generic"
-    clusterer = hdbscan.HDBSCAN(
-        min_cluster_size=min_cluster_size,
-        min_samples=min_samples,
-        metric=metric,
-        algorithm=algorithm,
-        cluster_selection_method="eom",
-    )
-    labels = clusterer.fit_predict(working_vectors)
-    probabilities = clusterer.probabilities_
-    return labels, probabilities, clusterer
-
-
 def project_umap(vectors: np.ndarray, *, n_neighbors: int) -> np.ndarray:
     if len(vectors) < 2:
         return np.zeros((len(vectors), 2), dtype=np.float32)
@@ -539,128 +487,6 @@ def collect_tokens(values: list[Any]) -> list[str]:
             if token:
                 counter[token] += 1
     return [token for token, _ in counter.most_common()]
-
-
-def compute_ucb_allocations(
-    df: pl.DataFrame,
-    *,
-    recency_days: int,
-    coef: float,
-    epsilon: float,
-    budget: int,
-    min_quota: int,
-) -> tuple[list[dict[str, Any]], int]:
-    valid = df.filter(pl.col("cluster_label") >= 0)
-    if valid.is_empty():
-        return [], min_quota
-
-    cutoff = date.today() - timedelta(days=max(recency_days, 1))
-    stats = (
-        valid.group_by("cluster_label")
-        .agg(
-            pl.len().alias("total_likes"),
-            pl.when(pl.col(PREFERENCE_DATE) >= cutoff)
-            .then(1)
-            .otherwise(0)
-            .sum()
-            .alias("recent_likes"),
-            pl.col("cluster_probability").mean().alias("mean_probability"),
-        )
-        .sort("cluster_label")
-    )
-    rows = stats.to_dicts()
-    total_events = sum(row["total_likes"] for row in rows)
-    log_total = math.log(max(total_events, 1) + 1.0) if total_events else 0.0
-
-    for row in rows:
-        total = row["total_likes"]
-        recent = row["recent_likes"]
-        ratio = recent / total if total else 0.0
-        explore = coef * math.sqrt(log_total / (total + epsilon)) if total else coef
-        row["recent_like_ratio"] = ratio
-        row["ucb_score"] = ratio + explore
-    allocated, effective_min = allocate_candidate_quota(
-        rows,
-        budget=budget,
-        min_quota=min_quota,
-    )
-    return allocated, effective_min
-
-
-def allocate_candidate_quota(
-    rows: list[dict[str, Any]],
-    *,
-    budget: int,
-    min_quota: int,
-) -> tuple[list[dict[str, Any]], int]:
-    if not rows:
-        return rows, min_quota
-    cluster_count = len(rows)
-    if budget <= 0:
-        for row in rows:
-            row["raw_quota"] = 0.0
-            row["quota"] = 0
-            row["quota_share"] = 0.0
-            row["quota_fraction"] = 0.0
-        return rows, 0
-
-    effective_min = min_quota
-    min_total = min_quota * cluster_count
-    if min_total > budget:
-        effective_min = max(budget // cluster_count, 0)
-
-    sum_scores = sum(row["ucb_score"] for row in rows)
-    if sum_scores <= 0:
-        raw_quota = budget / cluster_count
-        for row in rows:
-            row["raw_quota"] = raw_quota
-    else:
-        for row in rows:
-            row["raw_quota"] = budget * row["ucb_score"] / sum_scores
-
-    for row in rows:
-        floor_val = math.floor(row["raw_quota"])
-        row["_floor_quota"] = floor_val
-        row["quota_fraction"] = row["raw_quota"] - floor_val
-        row["quota"] = max(effective_min, floor_val)
-
-    total_alloc = sum(row["quota"] for row in rows)
-    if total_alloc > budget:
-        overflow = total_alloc - budget
-        adjustable = sorted(
-            rows,
-            key=lambda item: item["quota"] - effective_min,
-            reverse=True,
-        )
-        for row in adjustable:
-            reducible = row["quota"] - effective_min
-            if reducible <= 0:
-                continue
-            take = min(reducible, overflow)
-            row["quota"] -= take
-            overflow -= take
-            if overflow <= 0:
-                break
-    elif total_alloc < budget:
-        remainder = budget - total_alloc
-        if remainder > 0:
-            candidates = sorted(
-                rows,
-                key=lambda item: item["quota_fraction"],
-                reverse=True,
-            )
-            idx = 0
-            while remainder > 0 and candidates:
-                row = candidates[idx % len(candidates)]
-                row["quota"] += 1
-                remainder -= 1
-                idx += 1
-
-    for row in rows:
-        row["quota_share"] = row["quota"] / budget if budget > 0 else 0.0
-        row["quota_fraction"] = float(row["quota_fraction"])
-        row.pop("_floor_quota", None)
-    return rows, effective_min
 
 
 def merge_ucb_stats(
