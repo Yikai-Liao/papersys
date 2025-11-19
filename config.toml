@@ -62,7 +62,7 @@ boundary_threshold = 0.5
 limit = 20
 
 [summary]
-model = "gemini-2.5-pro"
+model = "gemini-3-pro-preview"
 use_batch = true
 poll_interval = 30
 
